@@ -101,7 +101,7 @@ function connectTunnel(target, proxy) {
  * @returns {Promise<{status:number,headers:object,body:Buffer}>}
  */
 async function requestOnce(url, opts) {
-  const { method, headers, body, proxy, timeoutMs, onProgress } = opts
+  const { method, headers, body, proxy, timeoutMs, onProgress, connectTimeoutMs } = opts
   const target = new URL(url)
 
   let socket = null
@@ -151,8 +151,15 @@ async function requestOnce(url, opts) {
     const hardTimer = setTimeout(() => {
       req.destroy(new Error(`请求超时（${timeoutMs}ms）`))
     }, timeoutMs)
+    // 连接阶段单独计时：有些 CDN 域名在国内是「TCP 连得上、但握手永远不返回」，
+    // 不单独设限的话要干等整个下载超时才失败（实测会白等 10 分钟）。
+    let connected = false
+    const connectTimer = setTimeout(() => {
+      if (!connected) req.destroy(new Error(`连接超时（${connectTimeoutMs}ms）`))
+    }, connectTimeoutMs)
     const done = (fn) => (...args) => {
       clearTimeout(hardTimer)
+      clearTimeout(connectTimer)
       fn(...args)
     }
 
@@ -190,6 +197,11 @@ async function requestOnce(url, opts) {
         reject(err)
       })
     }))
+
+    req.on('socket', (socket) => {
+      if (!socket.connecting) connected = true
+      else socket.once('connect', () => { connected = true })
+    })
 
     req.setTimeout(timeoutMs, () => {
       req.destroy(new Error(`请求超时（${timeoutMs}ms）`))
@@ -231,6 +243,7 @@ export async function request(url, opts = {}) {
     body = null,
     proxyUrl = '',
     timeoutMs = 15000,
+    connectTimeoutMs = 20000,
     maxRedirects = 5,
     onProgress = null,
   } = opts
@@ -247,6 +260,7 @@ export async function request(url, opts = {}) {
       body: currentBody,
       proxy,
       timeoutMs,
+      connectTimeoutMs,
       onProgress: i === 0 ? onProgress : null,
     })
 

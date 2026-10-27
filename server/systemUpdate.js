@@ -98,13 +98,19 @@ export function readSystemConfig() {
   const repo = String(stored.repo ?? '').trim() || String(process.env.GITHUB_REPO ?? '').trim()
   const proxy = String(stored.proxy ?? '').trim() || String(process.env.GITHUB_PROXY ?? '').trim()
   const envToken = String(process.env.GITHUB_TOKEN ?? '').trim()
-  const token = envToken || String(stored.token ?? '').trim()
+  const storedToken = String(stored.token ?? '').trim()
+  const token = envToken || storedToken
   return {
     repo,
     autoRestart: stored.autoRestart === true,
     proxy,
     token,
+    // 仅数据库里存的那一份。保存配置时必须以它为基准，
+    // 否则「留空 = 不修改」会把环境变量里的令牌写进数据库。
+    storedToken,
     hasToken: Boolean(token),
+    // 令牌来源：env = 环境变量 GITHUB_TOKEN（优先级更高），config = 系统设置里存的
+    tokenSource: envToken ? 'env' : (storedToken ? 'config' : 'none'),
     ...(row?.updated_at ? { updatedAt: row.updated_at } : {}),
   }
 }
@@ -151,7 +157,9 @@ export function saveSystemConfig(input = {}) {
 
   const current = readSystemConfig()
   const rawToken = input.token === undefined ? null : String(input.token)
-  let token = current.token
+  // 基准必须是「数据库里存的那份」，不能是有效令牌：
+  // 环境变量里的令牌优先级更高，但不该被顺手写进数据库。
+  let token = current.storedToken
   if (rawToken === '__CLEAR__') token = ''
   else if (rawToken && rawToken.trim()) token = rawToken.trim()
 
@@ -161,13 +169,15 @@ export function saveSystemConfig(input = {}) {
     `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   ).run(SYSTEM_CONFIG_KEY, JSON.stringify(value), now)
+  const envToken = String(process.env.GITHUB_TOKEN ?? '').trim()
   return {
     errors: [],
     config: {
       repo,
       autoRestart: value.autoRestart,
       proxy,
-      hasToken: Boolean(token),
+      hasToken: Boolean(envToken || token),
+      tokenSource: envToken ? 'env' : (token ? 'config' : 'none'),
       updatedAt: now,
     },
   }
@@ -454,7 +464,7 @@ export async function checkUpdate() {
  * @param {string} url
  * @param {string} dest
  * @param {(received:number,total:number)=>void} onProgress
- * @param {{auth?: boolean, proxyUrl?: string, fallbackNoAuth?: boolean}} opts
+ * @param {{auth?: boolean, proxyUrl?: string, fallbackNoAuth?: boolean, timeoutMs?: number}} opts
  *   公开仓库的附件在 CDN 跳转后不接受 Authorization 头，带上会 400；
  *   私有仓库的附件又**必须**带 Authorization 才能下载。
  *   所以：先按传入的 auth 试，失败再用另一种方式重试一次。
@@ -463,14 +473,15 @@ export async function downloadTo(
   url,
   dest,
   onProgress,
-  { auth = true, proxyUrl = '', fallbackNoAuth = true } = {},
+  { auth = true, proxyUrl = '', fallbackNoAuth = true, timeoutMs = 10 * 60 * 1000 } = {},
 ) {
   const attempt = async (useAuth) => {
     const res = await request(url, {
       method: 'GET',
       headers: githubHeaders({ auth: useAuth }),
       proxyUrl,
-      timeoutMs: 10 * 60 * 1000,
+      timeoutMs,
+      connectTimeoutMs: 20_000,
       onProgress: (received, total) => onProgress?.(received, total),
     })
     return res
@@ -724,23 +735,47 @@ export async function runUpdate() {
 
     /* ---------- 下载 ---------- */
     setStatus({ state: 'downloading', message: '正在下载更新包…', progress: 5 })
-    let downloadUrl
-    let downloadAuth = true
-    if (asset?.browser_download_url) {
-      downloadUrl = String(asset.browser_download_url)
-      downloadAuth = false // CDN 不接受 Authorization 头
-      addLog(`使用 Release 附件：${asset.name}（${Number(asset.size ?? 0)} 字节）`)
-    } else {
-      downloadUrl = `${GITHUB_API_BASE}/repos/${cfg.repo}/tarball/${encodeURIComponent(tag)}`
-      addLog(`Release 没有源码包附件，改用源码 tarball：${tag}`)
-    }
+    const sourceTarballUrl = `${GITHUB_API_BASE}/repos/${cfg.repo}/tarball/${encodeURIComponent(tag)}`
 
-    const { received } = await downloadTo(downloadUrl, tarPath, (got, total) => {
+    const progress = (got, total) => {
       const pct = total > 0
         ? Math.min(68, 5 + Math.round((got / total) * 63))
         : Math.min(68, 5 + Math.round((got / 1024 / 1024) * 10))
       setStatus({ progress: pct, message: `正在下载更新包…（${formatBytes(got)}${total ? ` / ${formatBytes(total)}` : ''}）` })
-    }, { auth: downloadAuth, proxyUrl: cfg.proxy })
+    }
+
+    let received = 0
+    if (asset?.browser_download_url) {
+      const assetUrl = String(asset.browser_download_url)
+      addLog(`使用 Release 附件：${asset.name}（${Number(asset.size ?? 0)} 字节）`)
+      try {
+        const r = await downloadTo(assetUrl, tarPath, progress, {
+          auth: false, // 公开仓库的 CDN 不接受 Authorization 头；私有仓库会自动回退到带头
+          proxyUrl: cfg.proxy,
+          // 附件 CDN 时快时慢（实测同一条下载从 5 秒超时到 104 秒成功都有），
+          // 所以给它单独的时间盒：超了就走源码 tarball（codeload 通道稳定在 2-3 秒）。
+          timeoutMs: 90_000,
+        })
+        received = r.received
+      } catch (err) {
+        // 附件走的是 release-assets.githubusercontent.com，这个域名在国内常常连不通或极慢，
+        // 而源码 tarball 走 codeload.github.com 通常是通的。
+        // 所以附件失败时改走源码 tarball，而不是整个更新失败。
+        addLog(`附件下载失败（${sanitize(shortError(err))}），改用源码 tarball`)
+        const r = await downloadTo(sourceTarballUrl, tarPath, progress, {
+          auth: true,
+          proxyUrl: cfg.proxy,
+        })
+        received = r.received
+      }
+    } else {
+      addLog(`Release 没有源码包附件，改用源码 tarball：${tag}`)
+      const r = await downloadTo(sourceTarballUrl, tarPath, progress, {
+        auth: true,
+        proxyUrl: cfg.proxy,
+      })
+      received = r.received
+    }
     addLog(`下载完成：${formatBytes(received)}`)
 
     /* ---------- 解压 ---------- */

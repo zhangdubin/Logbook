@@ -538,6 +538,8 @@ export interface SystemConfig {
   proxy: string
   /** 是否已保存 GitHub 访问令牌（令牌本身永不明文回显） */
   hasToken: boolean
+  /** 令牌来源：env = 环境变量 GITHUB_TOKEN，config = 系统设置里保存的，none = 未配置 */
+  tokenSource?: 'env' | 'config' | 'none'
   updatedAt?: string
 }
 

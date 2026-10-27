@@ -98,6 +98,32 @@ async function upload(path, form) {
 }
 
 /** 1×1 透明 PNG */
+/**
+ * 检查数据库里没有落库的真实 GitHub 令牌。
+ * 真实令牌形如 github_pat_…（细粒度）或 ghp_…（classic）；
+ * 冒烟测试自己写入的假令牌 ghp_smoke_… 属于预期，不算泄露。
+ */
+async function checkNoRealTokenInDb() {
+  try {
+    const { DatabaseSync } = await import('node:sqlite')
+    const path = new URL('../server/data/cuoti.db', import.meta.url)
+    const db = new DatabaseSync(path)
+    const rows = db.prepare('SELECT key, value FROM settings').all()
+    db.close()
+    for (const r of rows) {
+      const v = String(r.value ?? '')
+      const m = v.match(/(github_pat_[A-Za-z0-9_]{20,})|(ghp_[A-Za-z0-9]{20,})/g) || []
+      const real = m.filter((x) => !x.startsWith('ghp_smoke_'))
+      if (real.length) {
+        return { ok: false, detail: `数据库 ${r.key} 里出现了真实令牌` }
+      }
+    }
+    return { ok: true, detail: '数据库里没有真实令牌' }
+  } catch (e) {
+    return { ok: true, detail: `（跳过：${e.message}）` }
+  }
+}
+
 const TINY_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 
@@ -501,6 +527,16 @@ async function main() {
   })
   check('令牌留空表示不修改', keepToken.json?.hasToken === true, JSON.stringify(keepToken.json?.hasToken))
 
+  // 回归：后端进程带 GITHUB_TOKEN 环境变量时，「留空 = 不修改」绝不能把
+  // 环境变量里的真实令牌写进数据库（否则环境变量的密钥会落库）。
+  // 直接查数据库验证这个不变量 —— 令牌永远不该通过接口回显。
+  const dbLeak = await checkNoRealTokenInDb()
+  check(
+    '留空保存不会把环境变量令牌写进数据库',
+    dbLeak.ok,
+    dbLeak.detail,
+  )
+
   const updateInfo = await get('/api/system/update/info')
   check('GET /api/system/update/info 返回更新信息', updateInfo.status === 200, `HTTP ${updateInfo.status}`)
   check(
@@ -563,7 +599,16 @@ async function main() {
   adminCookie.forEach((v, k) => cookieJar.set(k, v))
   await send('PUT', '/api/system/config', { repo: '', autoRestart: false, proxy: '', token: '__CLEAR__' })
   const restored = await get('/api/system/config')
-  check('测试后配置已复原', restored.json?.repo === '' && restored.json?.hasToken === false, JSON.stringify(restored.json))
+  // 若后端进程本身带 GITHUB_TOKEN 环境变量，hasToken 会恒为 true
+  // （环境变量优先于系统设置里的令牌），此时令牌来源应为 env。
+  const tokenCleared =
+    restored.json?.hasToken === false ||
+    restored.json?.tokenSource === 'env'
+  check(
+    '测试后配置已复原',
+    restored.json?.repo === '' && tokenCleared,
+    JSON.stringify(restored.json),
+  )
 
   /* ---------- 汇总 ---------- */
   console.log(`\n\x1b[1m结果：${passed} 通过 / ${failed} 失败\x1b[0m`)

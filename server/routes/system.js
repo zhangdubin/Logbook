@@ -39,6 +39,7 @@ router.get('/config', requireAuth, (_req, res) => {
     autoRestart: cfg.autoRestart,
     proxy: cfg.proxy,
     hasToken: Boolean(cfg.hasToken),
+    tokenSource: cfg.tokenSource ?? 'none',
     ...(cfg.updatedAt ? { updatedAt: cfg.updatedAt } : {}),
   })
 })
