@@ -16,6 +16,7 @@
 import { Router } from 'express'
 
 import { requireAuth, requirePermission } from '../auth.js'
+import { demoModeInfo, writeStoredDemo, clearStoredDemo, parseBoolish } from '../demoMode.js'
 import {
   checkUpdate,
   currentVersion,
@@ -42,6 +43,33 @@ router.get('/config', requireAuth, (_req, res) => {
     tokenSource: cfg.tokenSource ?? 'none',
     ...(cfg.updatedAt ? { updatedAt: cfg.updatedAt } : {}),
   })
+})
+
+/* ------------------------------ 演示模式 ------------------------------ */
+/**
+ * 登录页的「演示账号」面板只在该模式下显示。
+ * 那一块会把 admin/admin123 等默认口令直接摆出来，
+ * 所以生产环境必须关掉（默认就是关的）。
+ */
+router.get('/demo', requireAuth, (_req, res) => {
+  res.json(demoModeInfo())
+})
+
+router.put('/demo', requirePermission('system:update'), (req, res) => {
+  const body = req.body ?? {}
+  // enabled 没给就当作「清掉设置，回到由环境变量决定」
+  if (body.enabled === null || body.enabled === undefined || body.reset === true) {
+    clearStoredDemo()
+    res.json(demoModeInfo())
+    return
+  }
+  const enabled = parseBoolish(body.enabled)
+  if (enabled === null) {
+    res.status(400).json({ error: 'BadRequest', message: 'enabled 必须是 true 或 false' })
+    return
+  }
+  writeStoredDemo(enabled)
+  res.json(demoModeInfo())
 })
 
 /* ------------------------------ 保存配置 ------------------------------ */

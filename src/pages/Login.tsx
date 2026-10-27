@@ -13,7 +13,7 @@ import { AlertBox, Spinner } from '@/components/ui'
 import { ApiRequestError } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 import { useToast } from '@/store/toast'
-import { formatVersion, useAppVersion } from '@/features/auth/useVersion'
+import { formatVersion, useAppVersion, useDemoMode } from '@/features/auth/useVersion'
 
 /* ---------------------------- 演示账号 ---------------------------- */
 
@@ -80,6 +80,12 @@ export default function Login() {
   /** 版本号（装饰性信息，拿不到就静默不显示） */
   const appVersion = useAppVersion()
   const versionLabel = formatVersion(appVersion)
+  /**
+   * 演示模式：后端 `GET /api/version` 的 `demo` 字段决定（默认 false）。
+   * 生产环境不渲染「演示账号」面板 —— 那一块会把默认口令公开出去。
+   * 取不到时按 false 处理（安全优先）。
+   */
+  const { demo } = useDemoMode()
 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -277,39 +283,41 @@ export default function Login() {
             </button>
           </form>
 
-          {/* ---------------- 演示账号 ---------------- */}
-          <div className="mt-7">
-            <div className="flex items-center gap-3">
-              <span className="h-px flex-1 bg-ink-200" />
-              <span className="text-[11px] font-bold text-ink-400">演示账号</span>
-              <span className="h-px flex-1 bg-ink-200" />
-            </div>
+          {/* ---------------- 演示账号（仅演示环境渲染） ---------------- */}
+          {demo && (
+            <div className="mt-7">
+              <div className="flex items-center gap-3">
+                <span className="h-px flex-1 bg-ink-200" />
+                <span className="text-[11px] font-bold text-ink-400">演示账号</span>
+                <span className="h-px flex-1 bg-ink-200" />
+              </div>
 
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {DEMO_ACCOUNTS.map((acc) => (
-                <button
-                  key={acc.key}
-                  type="button"
-                  disabled={submitting}
-                  onClick={() => useDemo(acc)}
-                  title={`${acc.username} / ${acc.password}`}
-                  data-testid={`demo-${acc.key}`}
-                  className={`flex flex-col items-center gap-1 rounded-xl border border-ink-200 bg-white px-2 py-2.5 text-xs font-bold text-ink-700 transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-card disabled:opacity-60`}
-                >
-                  <span
-                    className={`grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br ${acc.tone} text-sm text-white`}
-                    aria-hidden
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {DEMO_ACCOUNTS.map((acc) => (
+                  <button
+                    key={acc.key}
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => useDemo(acc)}
+                    title={`${acc.username} / ${acc.password}`}
+                    data-testid={`demo-${acc.key}`}
+                    className={`flex flex-col items-center gap-1 rounded-xl border border-ink-200 bg-white px-2 py-2.5 text-xs font-bold text-ink-700 transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-card disabled:opacity-60`}
                   >
-                    {acc.emoji}
-                  </span>
-                  {acc.label}
-                </button>
-              ))}
+                    <span
+                      className={`grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br ${acc.tone} text-sm text-white`}
+                      aria-hidden
+                    >
+                      {acc.emoji}
+                    </span>
+                    {acc.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2.5 text-center text-[11px] text-ink-400">
+                演示环境账号，点击可直接登录
+              </p>
             </div>
-            <p className="mt-2.5 text-center text-[11px] text-ink-400">
-              演示环境账号，点击可直接登录
-            </p>
-          </div>
+          )}
 
           <p className="mt-6 text-center text-[11px] text-ink-400">
             🔒 数据存储在本机，图片不出校 · 四级权限分级管理

@@ -91,6 +91,12 @@ export interface AppVersion {
   /** 构建时间，可能为 null */
   builtAt: string | null
   node: string
+  /**
+   * 是否为演示模式。
+   * 演示模式下登录页会显示「演示账号」面板（可一键以管理员/教师/家长/学生登录）。
+   * 生产环境为 false —— 那一块会把默认口令公开出去。
+   */
+  demo?: boolean
 }
 
 export const api = {

@@ -40,6 +40,9 @@ services:
       OCR_SERVICE_URL: ${OCR_SERVICE_URL:-}
       # 首次启动灌演示数据（会清空业务数据，仅演示用）
       SEED_DEMO: ${SEED_DEMO:-false}
+      # 演示模式：登录页是否显示「演示账号」面板。
+      # 那一块会把默认口令公开出去，生产环境保持 false。
+      DEMO_MODE: ${DEMO_MODE:-false}
     volumes:
       # SQLite 数据库
       - cuoti-data:/app/server/data

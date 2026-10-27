@@ -167,6 +167,14 @@ async function main() {
     Object.keys(ver?.json ?? {}).join(','),
   )
 
+  /* 未登录时不能读演示模式状态 */
+  const demoRead = await get('/api/system/demo').catch(() => null)
+  check(
+    'GET /api/system/demo 需要登录',
+    demoRead?.status === 401,
+    `HTTP ${demoRead?.status}`,
+  )
+
   /* ---------- 认证与权限 ---------- */
   section('认证与权限')
   const anon = await get('/api/students')
@@ -216,6 +224,56 @@ async function main() {
   check(
     '账号列表不含口令散列',
     !JSON.stringify(users.json ?? []).includes('scrypt$'),
+  )
+
+  /* ---------- 演示模式（生产环境不该显示演示账号面板） ---------- */
+  section('演示模式')
+  check(
+    '/api/version 带 demo 标志',
+    typeof ver?.json?.demo === 'boolean',
+    `demo=${ver?.json?.demo}`,
+  )
+  const demoAdmin = await get('/api/system/demo')
+  check(
+    '管理员可读演示模式状态',
+    demoAdmin?.status === 200 && typeof demoAdmin.json?.demo === 'boolean',
+    demoAdmin ? `HTTP ${demoAdmin.status} demo=${demoAdmin.json?.demo} source=${demoAdmin.json?.source}` : '连接失败',
+  )
+  check(
+    '两个接口的 demo 值一致',
+    demoAdmin?.json?.demo === ver?.json?.demo,
+    `version=${ver?.json?.demo} system=${demoAdmin?.json?.demo}`,
+  )
+  // 演示模式默认必须关闭：生产环境一旦打开，登录页会把默认口令公开出去
+  check(
+    '未显式开启时演示模式为关闭',
+    demoAdmin?.json?.demo === false,
+    `demo=${demoAdmin?.json?.demo} source=${demoAdmin?.json?.source}`,
+  )
+  // 切到开启再复原，确认开关真的生效、且不留下残留状态
+  const demoOn = await send('PUT', '/api/system/demo', { enabled: true })
+  check(
+    '可开启演示模式',
+    demoOn?.status === 200 && demoOn.json?.demo === true && demoOn.json?.source === 'setting',
+    demoOn ? `HTTP ${demoOn.status} source=${demoOn.json?.source}` : '连接失败',
+  )
+  const demoVerOn = await get('/api/version')
+  check(
+    '开启后 /api/version 同步为 demo=true',
+    demoVerOn?.json?.demo === true,
+    `demo=${demoVerOn?.json?.demo}`,
+  )
+  const demoReset = await send('PUT', '/api/system/demo', { reset: true })
+  check(
+    '可交回环境变量决定',
+    demoReset?.status === 200 && demoReset.json?.stored === null,
+    demoReset ? `HTTP ${demoReset.status} source=${demoReset.json?.source}` : '连接失败',
+  )
+  const demoVerOff = await get('/api/version')
+  check(
+    '复原后演示模式回到关闭',
+    demoVerOff?.json?.demo === false,
+    `demo=${demoVerOff?.json?.demo}`,
   )
 
   /* ---------- 学生 ---------- */

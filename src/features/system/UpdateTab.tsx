@@ -18,6 +18,7 @@ import { AlertBox, Modal } from '@/components/ui'
 import { useAuth } from '@/store/auth'
 import { useToast } from '@/store/toast'
 import { PublishPanel } from './PublishPanel'
+import { DemoModeCard } from './DemoModeCard'
 import { RepoConfigCard } from './RepoConfigCard'
 import { UpdateConfirmModal } from './UpdateConfirmModal'
 import { UpdatePanel } from './UpdatePanel'
@@ -310,6 +311,9 @@ export function UpdateTab() {
 
   return (
     <div className="space-y-4">
+      {/* 演示模式：登录页「演示账号」面板的开关（安全相关，放最上面方便找） */}
+      <DemoModeCard />
+
       <div ref={configCardRef}>
         <RepoConfigCard
           repo={repo}

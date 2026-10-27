@@ -31,6 +31,7 @@ import { settingsRouter } from './routes/settings.js'
 import { authRouter } from './routes/auth.js'
 import { usersRouter } from './routes/users.js'
 import { systemRouter } from './routes/system.js'
+import { isDemoMode } from './demoMode.js'
 import { ensureAdminUser, pruneExpiredSessions, requireAuth } from './auth.js'
 import { resolveProviderConfig, describeEngineCode, describeActiveEngine } from './ai.js'
 import { appVersion } from './version.js'
@@ -79,6 +80,9 @@ app.get('/api/version', (_req, res) => {
     commit: v.commit,
     builtAt: v.builtAt,
     node: process.version,
+    // 演示模式：登录页据此决定要不要显示「演示账号」面板。
+    // 生产环境默认 false —— 那一块会把默认口令公开出去，必须藏起来。
+    demo: isDemoMode(),
   })
 })
 
