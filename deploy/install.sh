@@ -161,14 +161,14 @@ pick_asset() {
 download() {
   local url="$1" out="$2"
   if [ -n "${GITHUB_TOKEN:-}" ]; then
-    curl -fL --retry 4 --retry-delay 3 --retry-all-errors \
+    curl -fL --retry 5 --retry-delay 3 --retry-all-errors \
          --connect-timeout 30 --speed-time 60 --speed-limit 1024 \
-         --max-time 600 \
+         --max-time 300 --retry-max-time 420 \
          -H "Authorization: Bearer $GITHUB_TOKEN" -o "$out" "$url"
   else
-    curl -fL --retry 4 --retry-delay 3 --retry-all-errors \
+    curl -fL --retry 5 --retry-delay 3 --retry-all-errors \
          --connect-timeout 30 --speed-time 60 --speed-limit 1024 \
-         --max-time 600 \
+         --max-time 300 --retry-max-time 420 \
          -o "$out" "$url"
   fi
 }
@@ -255,6 +255,10 @@ tar -xzf "$TMP_DIR/pkg.tar.gz" -C "$TMP_DIR"
 PKG_DIR="$(find "$TMP_DIR" -maxdepth 1 -mindepth 1 -type d | head -1)"
 [ -n "$PKG_DIR" ] || fail "解压失败"
 info "解压到 $(basename "$PKG_DIR")"
+
+# 刷新 mtime：tar 归一化后的 mtime（1970-01-01）会让 BuildKit 的增量上下文传输
+# 误判文件没变，从而复用上一版的缓存内容 —— 构建出来的镜像里会是旧版本。
+find "$PKG_DIR" -exec touch {} + 2>/dev/null || true
 
 # 保留已有数据与配置（升级时不能丢）
 mkdir -p "$INSTALL_DIR"

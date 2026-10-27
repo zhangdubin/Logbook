@@ -112,12 +112,12 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 download() {
   local url="$1" out="$2"
   if [ -n "${GITHUB_TOKEN:-}" ]; then
-    curl -fL --retry 4 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
-         --speed-time 60 --speed-limit 1024 --max-time 600 \
+    curl -fL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
+         --speed-time 60 --speed-limit 1024 --max-time 300 --retry-max-time 420 \
          -H "Authorization: Bearer $GITHUB_TOKEN" -o "$out" "$url"
   else
-    curl -fL --retry 4 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
-         --speed-time 60 --speed-limit 1024 --max-time 600 -o "$out" "$url"
+    curl -fL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
+         --speed-time 60 --speed-limit 1024 --max-time 300 --retry-max-time 420 -o "$out" "$url"
   fi
 }
 
@@ -189,6 +189,10 @@ for item in server dist src docs scripts deploy public package.json package-lock
   [ -e "$PKG_DIR/$item" ] && cp -a "$PKG_DIR/$item" "$INSTALL_DIR/"
 done
 ok "程序文件已替换（数据库 / 上传图片 / .env 保持不变）"
+
+# 刷新 mtime：tar 归一化后的 mtime 会让 BuildKit 的增量上下文传输
+# 误判文件没变，从而复用上一版的缓存内容（构建出旧版本的镜像）
+find "$INSTALL_DIR" -exec touch {} + 2>/dev/null || true
 
 # --------------------------- 5. 依赖与重启 ---------------------------------
 step "更新依赖并重启"

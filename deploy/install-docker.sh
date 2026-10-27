@@ -84,7 +84,7 @@ docker info >/dev/null 2>&1 || fail "Docker 没在运行（systemctl start docke
 # ---------------------------- 1. 解析版本 -----------------------------------
 if [ "$VERSION" = "latest" ]; then
   step "查询最新版本"
-  latest_json="$(curl -fsSL --retry 4 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+  latest_json="$(curl -fsSL --retry 4 --retry-delay 2 --retry-all-errors --connect-timeout 20 --retry-max-time 120 \
     "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)"
   VERSION="$(printf '%s' "$latest_json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([0-9][0-9.]*\)".*/\1/p' | head -1)"
   [ -n "$VERSION" ] || fail "查不到最新版本，请用 --version 指定，例如 --version 1.1.2"
@@ -104,8 +104,12 @@ trap cleanup EXIT
 # 国内访问 github.com 的 Release 附件经常超时，所以每级都带重试。
 download() {
   local url="$1" out="$2"
-  curl -fsSL --retry 8 --retry-delay 3 --retry-all-errors \
-    --connect-timeout 25 --max-time 900 -o "$out" "$url" 2>/dev/null
+  # --retry-max-time 是关键：curl 8.x 里 --max-time 是**每次重试**单独计时，
+  # 光有 --max-time 的话最坏情况是「单次超时 × 重试次数」，能卡几小时。
+  # --retry-max-time 给整个重试窗口封个顶。
+  curl -fsSL --retry 6 --retry-delay 3 --retry-all-errors \
+    --connect-timeout 25 --max-time 300 --retry-max-time 420 \
+    -o "$out" "$url" 2>/dev/null
 }
 
 ASSET_URL="https://github.com/${REPO}/releases/download/v${VERSION}/cuoti-analytics-v${VERSION}-deploy.tar.gz"
@@ -134,6 +138,16 @@ if [ "$SRC_DIR" != "$INSTALL_DIR" ]; then
   rm -rf "$SRC_DIR"
 fi
 ok "已安装到 ${INSTALL_DIR}"
+
+# ---- 必须刷新 mtime（否则会构建出「上一版」的镜像）------------------------
+# tar 会把文件的 mtime 归一化成一个固定时间（这里是 1970-01-01），
+# 而 BuildKit 的增量上下文传输是按 **(mtime, size)** 判断文件有没有变的。
+# 版本升级时绝大多数文件的大小不变（比如 package.json 的 1.1.1 → 1.1.2
+# 长度一模一样），于是 BuildKit 会直接复用上一版的缓存内容 ——
+# 构建出来的镜像里 package.json 还写着旧版本号。
+#
+# 统一 touch 一遍，强制 BuildKit 重新读取文件内容。
+find "$INSTALL_DIR" -exec touch {} + 2>/dev/null || true
 
 # ---------------------------- 4. 生成 .env ----------------------------------
 step "生成环境配置"
