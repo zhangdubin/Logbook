@@ -44,7 +44,8 @@ warn() { echo "  ${YELLOW}!${OFF} $*"; }
 fail() { echo "  ${RED}✗${OFF} $*" >&2; exit 1; }
 info() { echo "  ${DIM}$*${OFF}"; }
 
-[ "$(id -u)" -eq 0 ] || fail "请用 root 运行"
+[ "$(id -u)" -eq 0 ] || [ "${ALLOW_NON_ROOT:-0}" = "1" ] \
+  || fail "请用 root 运行"
 [ -d "$INSTALL_DIR" ] || fail "安装目录不存在：$INSTALL_DIR（先跑 install.sh）"
 
 echo
@@ -87,29 +88,53 @@ fi
 step "下载更新包"
 
 pick_asset() {
+  # $1 = ERE 正则。`grep -E -- "$1"`：-- 用来结束选项解析，
+  # 这样以 - 开头的模式（-deploy\.tar\.gz$）才不会被当成选项。
   echo "$RELEASE_JSON" | tr ',' '\n' | grep '"browser_download_url"' \
     | sed 's/.*"browser_download_url": *"\([^"]*\)".*/\1/' \
-    | grep -- "$1" | head -1
+    | grep -E -- "$1" | head -1
 }
-ASSET_URL="$(pick_asset -- '-deploy\.tar\.gz$')"
-[ -n "$ASSET_URL" ] || ASSET_URL="$(pick_asset -- '\.tar\.gz$')"
-[ -n "$ASSET_URL" ] || fail "Release $TARGET_TAG 里没有可用的 .tar.gz 附件"
-info "$ASSET_URL"
+ASSET_URL="$(pick_asset '-deploy\.tar\.gz$')"
+[ -n "$ASSET_URL" ] || ASSET_URL="$(pick_asset '\.tar\.gz$')"
+
+# 下载源按优先级排列（附件 CDN 时快时慢，退到 API tarball 更稳）：
+#   1) 部署版本附件 —— 含已构建好的 dist/，升级后不用重新构建前端
+#   2) 源码包附件
+#   3) API tarball —— 走 codeload，实测稳定 2~3 秒
+CANDIDATES=()
+[ -n "$ASSET_URL" ] && CANDIDATES+=("$ASSET_URL")
+CANDIDATES+=("$GH_API/repos/$REPO/tarball/$TARGET_TAG")
+[ ${#CANDIDATES[@]} -gt 0 ] || fail "Release $TARGET_TAG 里没有可用的下载来源"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-if [ -n "${GITHUB_TOKEN:-}" ]; then
-  curl -fL --retry 6 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
-       --speed-time 60 --speed-limit 1024 \
-       -H "Authorization: Bearer $GITHUB_TOKEN" -o "$TMP_DIR/pkg.tar.gz" "$ASSET_URL"
-else
-  curl -fL --retry 6 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
-       --speed-time 60 --speed-limit 1024 -o "$TMP_DIR/pkg.tar.gz" "$ASSET_URL"
-fi
-ok "下载完成（$(du -h "$TMP_DIR/pkg.tar.gz" | cut -f1)）"
+download() {
+  local url="$1" out="$2"
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    curl -fL --retry 4 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
+         --speed-time 60 --speed-limit 1024 --max-time 600 \
+         -H "Authorization: Bearer $GITHUB_TOKEN" -o "$out" "$url"
+  else
+    curl -fL --retry 4 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
+         --speed-time 60 --speed-limit 1024 --max-time 600 -o "$out" "$url"
+  fi
+}
 
-if curl -fsSL --max-time 15 -o "$TMP_DIR/pkg.sha256" "${ASSET_URL}.sha256" 2>/dev/null; then
+DOWNLOADED_FROM=""
+for url in "${CANDIDATES[@]}"; do
+  if download "$url" "$TMP_DIR/pkg.tar.gz"; then
+    DOWNLOADED_FROM="$url"
+    ok "下载完成（$(du -h "$TMP_DIR/pkg.tar.gz" | cut -f1)）"
+    info "来源：$url"
+    break
+  fi
+  warn "下载失败，换下一个来源：$url"
+  rm -f "$TMP_DIR/pkg.tar.gz"
+done
+[ -n "$DOWNLOADED_FROM" ] || fail "所有下载来源都失败了"
+
+if curl -fsSL --max-time 15 -o "$TMP_DIR/pkg.sha256" "${DOWNLOADED_FROM}.sha256" 2>/dev/null; then
   EXPECT="$(awk '{print $1}' "$TMP_DIR/pkg.sha256" 2>/dev/null || true)"
   ACTUAL="$(sha256sum "$TMP_DIR/pkg.tar.gz" 2>/dev/null | awk '{print $1}' || true)"
   if [ -z "${EXPECT:-}" ] || [ -z "${ACTUAL:-}" ]; then
@@ -132,7 +157,7 @@ BACKUP_DIR="$INSTALL_DIR/backups/${CURRENT:-unknown}-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$BACKUP_DIR"
 for item in server dist src docs scripts deploy package.json package-lock.json \
             vite.config.ts tsconfig.json tsconfig.node.json index.html public \
-            README.md .env.example .gitignore; do
+            README.md .env.example .gitignore VERSION; do
   [ -e "$INSTALL_DIR/$item" ] && cp -a "$INSTALL_DIR/$item" "$BACKUP_DIR/" 2>/dev/null || true
 done
 # 数据库与 .env 只做快照，不参与升级替换
@@ -159,7 +184,7 @@ step "替换程序文件"
 
 for item in server dist src docs scripts deploy public package.json package-lock.json \
             vite.config.ts tsconfig.json tsconfig.node.json index.html README.md \
-            .env.example .gitignore; do
+            .env.example .gitignore VERSION; do
   rm -rf "${INSTALL_DIR:?}/$item"
   [ -e "$PKG_DIR/$item" ] && cp -a "$PKG_DIR/$item" "$INSTALL_DIR/"
 done
@@ -180,7 +205,7 @@ if [ ! -d "$INSTALL_DIR/dist" ]; then
 fi
 ok "依赖已就绪"
 
-if command -v systemctl >/dev/null 2>&1; then
+if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
   systemctl restart "$SERVICE_NAME"
   sleep 3
   if systemctl is-active --quiet "$SERVICE_NAME"; then
@@ -190,7 +215,13 @@ if command -v systemctl >/dev/null 2>&1; then
   fi
 fi
 
-HEALTH="$(curl -fsS --max-time 10 "http://127.0.0.1:${PORT:-5181}/api/health" 2>/dev/null || true)"
+# 端口：环境变量优先，其次从已安装的 .env 里读，最后退回默认 5181
+CHECK_PORT="${PORT:-}"
+if [ -z "$CHECK_PORT" ] && [ -f "$INSTALL_DIR/.env" ]; then
+  CHECK_PORT="$(grep -E '^PORT=' "$INSTALL_DIR/.env" | tail -1 | cut -d= -f2 | tr -d '\"' | tr -d "'" || true)"
+fi
+CHECK_PORT="${CHECK_PORT:-5181}"
+HEALTH="$(curl -fsS --max-time 10 "http://127.0.0.1:$CHECK_PORT/api/health" 2>/dev/null || true)"
 if [ -n "$HEALTH" ]; then
   ok "健康检查：$HEALTH"
 else
