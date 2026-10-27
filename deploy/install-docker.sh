@@ -128,14 +128,50 @@ fi
 # ---------------------------- 3. 解压到安装目录 ------------------------------
 step "解压到 ${INSTALL_DIR}"
 mkdir -p "$INSTALL_DIR"
-tar -xzf "$TARBALL" -C "$INSTALL_DIR"
+# 先解到临时目录，再挪进安装目录。
+# 顶层目录名随下载来源而变，不能按名字匹配：
+#   - Release 部署包  → cuoti-analytics-v1.1.4/
+#   - 源码 tarball    → Logbook-1.1.4/（GitHub 自己的命名，owner-repo-短 sha）
+# 之前写死 'cuoti-analytics-*'，一旦回退到源码 tarball 就直接找不到目录、脚本退出。
+EXTRACT_DIR="$TMP_DIR/extract"
+mkdir -p "$EXTRACT_DIR"
+tar -xzf "$TARBALL" -C "$EXTRACT_DIR"
 
-SRC_DIR="$(find "$INSTALL_DIR" -maxdepth 1 -type d -name 'cuoti-analytics-*' | head -1)"
-[ -n "$SRC_DIR" ] || fail "解压后没找到 cuoti-analytics-* 目录"
+SRC_DIR=""
+for d in "$EXTRACT_DIR"/*/; do
+  [ -d "$d" ] || continue
+  SRC_DIR="${d%/}"
+  break
+done
+# 没有顶层目录时，说明文件直接铺在根上
+[ -n "$SRC_DIR" ] || SRC_DIR="$EXTRACT_DIR"
+
+# 校验包里确实有我们要的东西 —— 下到半截文件或下错包时立刻就能发现，
+# 而不是等到 docker build 报一堆看不懂的错。
+[ -f "$SRC_DIR/Dockerfile" ] \
+  || fail "包里没有 Dockerfile —— 下到的不是本系统的发布包，请检查网络后重试"
+[ -f "$SRC_DIR/docker-compose.yml" ] \
+  || fail "包里没有 docker-compose.yml —— 下到的不是本系统的发布包，请检查网络后重试"
+
+mkdir -p "$INSTALL_DIR"
+# 已有安装时保留数据与用户配置
+if [ -d "$INSTALL_DIR/server/data" ]; then
+  cp -a "$INSTALL_DIR/server/data" "$SRC_DIR/server/data.keep" 2>/dev/null || true
+  rm -rf "$SRC_DIR/server/data"
+  mv "$SRC_DIR/server/data.keep" "$SRC_DIR/server/data" 2>/dev/null || true
+fi
+if [ -d "$INSTALL_DIR/server/uploads" ]; then
+  cp -a "$INSTALL_DIR/server/uploads" "$SRC_DIR/server/uploads.keep" 2>/dev/null || true
+  rm -rf "$SRC_DIR/server/uploads"
+  mv "$SRC_DIR/server/uploads.keep" "$SRC_DIR/server/uploads" 2>/dev/null || true
+fi
+if [ -f "$INSTALL_DIR/.env" ]; then
+  cp -a "$INSTALL_DIR/.env" "$SRC_DIR/.env" 2>/dev/null || true
+fi
+
 # 把内容挪到 INSTALL_DIR 根下
 if [ "$SRC_DIR" != "$INSTALL_DIR" ]; then
   (cd "$SRC_DIR" && tar -cf - .) | (cd "$INSTALL_DIR" && tar -xf -)
-  rm -rf "$SRC_DIR"
 fi
 ok "已安装到 ${INSTALL_DIR}"
 
