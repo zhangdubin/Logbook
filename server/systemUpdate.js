@@ -386,6 +386,18 @@ export function pickAsset(release) {
   // 这里曾经把 .zip 也列进候选，一旦发布方挂了 zip 附件就会选中它，
   // 然后在解包阶段失败 —— 所以宁可回退到源码 tarball，也不要选一个解不开的包。
   const wanted = ['.tar.gz', '.tgz']
+
+  // 同一个 Release 下现在挂了两个包，选取顺序必须确定，不能依赖 API 返回顺序：
+  //   1) 源码包   cuoti-analytics-v<版本>.tar.gz          —— 一键更新用这个
+  //   2) 部署版本 cuoti-analytics-v<版本>-deploy.tar.gz   —— 云服务器安装用这个
+  // 两者内容基本一致（部署版本多一个 dist/，而 dist/ 在更新时本来就会被排除），
+  // 所以选谁都能正确更新；这里优先源码包，避免白下 dist/ 那部分体积。
+  const sourcePkg = assets.find((a) => {
+    const n = String(a?.name ?? '').toLowerCase()
+    return n.endsWith('.tar.gz') && !n.includes('-deploy.')
+  })
+  if (sourcePkg) return sourcePkg
+
   for (const ext of wanted) {
     const hit = assets.find((a) => String(a?.name ?? '').toLowerCase().endsWith(ext))
     if (hit) return hit

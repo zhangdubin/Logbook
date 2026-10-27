@@ -214,13 +214,15 @@ export AI_API_KEY="ollama"                          # 本地无需真实密钥
 ### 一键安装（从 GitHub 拉取）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhangdubin/Logbook/main/deploy/install.sh | sudo bash
+curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
+  https://raw.githubusercontent.com/zhangdubin/Logbook/main/deploy/install.sh | sudo bash
 ```
 
 指定版本与安装目录：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhangdubin/Logbook/main/deploy/install.sh \
+curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
+  https://raw.githubusercontent.com/zhangdubin/Logbook/main/deploy/install.sh \
   | sudo bash -s -- --repo zhangdubin/Logbook --version 1.0.0 --dir /opt/cuoti-analytics
 ```
 
