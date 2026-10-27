@@ -454,16 +454,37 @@ export async function checkUpdate() {
  * @param {string} url
  * @param {string} dest
  * @param {(received:number,total:number)=>void} onProgress
- * @param {{auth?: boolean, proxyUrl?: string}} opts 附件（CDN）下载不要带 Authorization
+ * @param {{auth?: boolean, proxyUrl?: string, fallbackNoAuth?: boolean}} opts
+ *   公开仓库的附件在 CDN 跳转后不接受 Authorization 头，带上会 400；
+ *   私有仓库的附件又**必须**带 Authorization 才能下载。
+ *   所以：先按传入的 auth 试，失败再用另一种方式重试一次。
  */
-export async function downloadTo(url, dest, onProgress, { auth = true, proxyUrl = '' } = {}) {
-  const res = await request(url, {
-    method: 'GET',
-    headers: githubHeaders({ auth }),
-    proxyUrl,
-    timeoutMs: 10 * 60 * 1000,
-    onProgress: (received, total) => onProgress?.(received, total),
-  })
+export async function downloadTo(
+  url,
+  dest,
+  onProgress,
+  { auth = true, proxyUrl = '', fallbackNoAuth = true } = {},
+) {
+  const attempt = async (useAuth) => {
+    const res = await request(url, {
+      method: 'GET',
+      headers: githubHeaders({ auth: useAuth }),
+      proxyUrl,
+      timeoutMs: 10 * 60 * 1000,
+      onProgress: (received, total) => onProgress?.(received, total),
+    })
+    return res
+  }
+
+  let res = await attempt(auth)
+  if (
+    fallbackNoAuth &&
+    (res.status === 401 || res.status === 403 || res.status === 404)
+  ) {
+    // 一次失败就换另一种鉴权方式再试：
+    // 带鉴权失败 → 公开仓库的 CDN 不接受该头；不带失败 → 私有仓库必须带头
+    res = await attempt(!auth)
+  }
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`下载失败：HTTP ${res.status}`)
   }

@@ -253,13 +253,20 @@ export async function request(url, opts = {}) {
     const code = res.status
     const location = res.headers.location
     if ([301, 302, 303, 307, 308].includes(code) && location) {
+      const next = new URL(location, current)
+      const crossedOrigin = next.origin !== new URL(current).origin
+      // 跨域跳转时必须丢掉 Authorization：
+      // 私有仓库的附件会 302 到签名的对象存储地址，对方收到
+      // 「Authorization: Bearer ...」会直接拒（只允许一种鉴权机制）。
+      // 反过来也不能把凭据带到别的域去。
+      if (crossedOrigin) delete headers.authorization
       // 303 一律转 GET；307/308 保持方法与请求体
       if (code === 303) {
         currentMethod = 'GET'
         currentBody = null
         delete headers['content-length']
       }
-      current = new URL(location, current).href
+      current = next.href
       continue
     }
     return res
