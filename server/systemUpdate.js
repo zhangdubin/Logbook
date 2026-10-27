@@ -971,8 +971,14 @@ export async function publishVersion(input = {}) {
     throw err
   }
   const current = currentVersion()
-  if (version === current) {
-    const err = new Error(`版本号 ${version} 与当前版本相同，请换一个更高的版本号`)
+  // 只拦「比当前版本更低」的降级发布。
+  // 首次发布 v1.0.0 是正常场景（当前版本就是 1.0.0），不能拦；
+  // 同一个 tag 重复发布由 GitHub 自己返回 422。
+  const cmp = compareVersions(version, current)
+  if (cmp !== null && cmp < 0) {
+    const err = new Error(
+      `版本号 ${version} 低于当前版本 ${current}，不能发布更低的版本（会变成降级安装）`,
+    )
     err.code = 'BadRequest'
     throw err
   }
