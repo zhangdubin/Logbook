@@ -88,7 +88,7 @@ npm run dev
 ### 登录账号
 
 首次启动会自动创建系统管理员（用户名 `admin` / 口令 `admin123`，**首次登录后请立即修改**）。
-执行 `npm run seed` 会另外创建三个演示账号，登录页有快捷按钮可直接点入：
+执行 `npm run seed` 会另外创建三个演示账号：
 
 | 账号 | 口令 | 角色 | 能看到什么 |
 | --- | --- | --- | --- |
@@ -96,6 +96,9 @@ npm run dev
 | `teacher` | `teacher123` | 教师 | 全部演示学生的错题与班级统计、报表导出 |
 | `parent` | `parent123` | 家长 | 只看自己孩子（张梓萱）的错题、统计与报告 |
 | `student` | `student123` | 学生 | 只看自己的错题本与今日复习（无报告、无导出） |
+
+> **生产环境注意**：登录页的「演示账号」快捷按钮**只在演示模式下显示**，生产默认关闭 ——
+> 那块会把上面这些默认口令公开给所有访问者。要开启见下方「[🎭 演示模式](#-演示模式)」。
 
 > 权限分两个维度强制执行：**能做什么**（15 个权限点）由服务端中间件校验，
 > **能对谁做**（数据范围）由 `parent_id` / `teacher_id` / `user_id` 关联过滤。
@@ -223,7 +226,7 @@ curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
 ```bash
 curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
   https://raw.githubusercontent.com/zhangdubin/Logbook/main/deploy/install.sh \
-  | sudo bash -s -- --repo zhangdubin/Logbook --version 1.0.0 --dir /opt/cuoti-analytics
+  | sudo bash -s -- --repo zhangdubin/Logbook --version 1.1.2 --dir /opt/cuoti-analytics
 ```
 
 安装脚本会自动完成：检查 Node 20+ → 查 GitHub Release → 下载并校验 sha256 → 安装到
@@ -254,24 +257,45 @@ curl -s http://127.0.0.1:5181/api/version  # 当前版本号
 
 | 包 | 文件名 | 内容 | 用途 |
 | --- | --- | --- | --- |
-| 源码包 | `cuoti-analytics-v1.0.0.tar.gz` | 全部源码（不含 `dist/`） | Git 历史、二次开发 |
-| **部署版本** | `cuoti-analytics-v1.0.0-deploy.tar.gz` | 源码 + **已构建好的 `dist/`** + `deploy/` | **服务器直接跑，无需装构建工具链** |
+| 源码包 | `cuoti-analytics-v1.1.2.tar.gz` | 全部源码（不含 `dist/`） | Git 历史、二次开发 |
+| **部署版本** | `cuoti-analytics-v1.1.2-deploy.tar.gz` | 源码 + **已构建好的 `dist/`** + `deploy/` | **服务器直接跑，无需装构建工具链** |
 
 详细的部署步骤、环境变量表、nginx/HTTPS 配置、回滚方法与故障排查见
 [docs/05 · 开发与部署指南](docs/05-开发与部署指南.md)。
 
 ### Docker 容器部署
 
+**一键安装（推荐）**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhangdubin/Logbook/main/deploy/install-docker.sh | sudo bash
+```
+
+脚本会自动：检查 Docker 环境 → 查最新版本 → 下载发布包（Release 附件失败时自动回退到 API tarball）
+→ 生成 `.env` 与 compose 覆盖文件 → 构建镜像 → 启动容器 → 健康检查 → 打印访问地址。
+
+```bash
+# 带参数
+sudo bash install-docker.sh --version 1.1.2 --dir /opt/cuoti --port 5181 --ocr
+#   --version  指定版本（默认取最新）
+#   --dir      安装目录（默认 /opt/cuoti-analytics）
+#   --port     对外端口（默认 5181）
+#   --bind     端口绑定地址（默认 0.0.0.0；只想本机访问就填 127.0.0.1）
+#   --ocr      同时构建并启动本地 OCR 侧车
+```
+
+**手动构建（想自定义时用）**
+
 ```bash
 # 构建镜像（VERSION / COMMIT 会写进容器里的版本信息）
-docker build -t cuoti-analytics:1.0.0 \
-  --build-arg VERSION=1.0.0 --build-arg COMMIT=$(git rev-parse --short HEAD) .
+docker build -t cuoti-analytics:1.1.2 \
+  --build-arg VERSION=1.1.2 --build-arg COMMIT=8a46202 .
 
 # 直接跑
 docker run -d --name cuoti -p 5181:5181 \
   -v cuoti-data:/app/server/data \
   -v cuoti-uploads:/app/server/uploads \
-  cuoti-analytics:1.0.0
+  cuoti-analytics:1.1.2
 
 # 或者用 compose
 docker compose up -d                          # 只起应用
@@ -282,14 +306,39 @@ docker compose down                          # 停止（数据保留）
 docker compose down -v                       # 停止并删卷（⚠️ 数据丢失）
 ```
 
-镜像基于 `node:24-alpine` **两阶段构建**：builder 阶段编译前端，runtime 阶段只带生产依赖，
+镜像基于 `node:24-alpine` **两阶段构建**：builder 阶段编译前端，runtime 阶段只装生产依赖，
 以非 root 用户运行，带 `HEALTHCHECK`，数据库与上传图片都在 named volume 里持久化。
+镜像 **329 MB**，**不依赖 buildx**（没装 buildx 的服务器用 classic builder 也能构建）。
 
 | 卷 | 内容 |
 | --- | --- |
 | `cuoti-data` | SQLite 数据库（错题、账号、会话、系统设置） |
 | `cuoti-uploads` | 上传的错题原图 |
-| `ocr-models` | OCR 模型缓存（仅 `--profile ocr` 时用） |
+
+---
+
+### 🎭 演示模式
+
+登录页有一块「演示账号」面板（管理员 / 教师 / 家长 / 学生，点一下直接登录）。
+**它只在演示环境显示，生产环境默认关闭** —— 那块会把 `admin/admin123` 等默认口令
+公开给所有访问者。
+
+| 来源 | 优先级 | 说明 |
+| --- | --- | --- |
+| 系统设置里的「演示模式」开关 | 最高 | 管理员在「系统设置 → 系统更新」里切换，运行时即生效 |
+| 环境变量 `DEMO_MODE=true` | 中 | 部署级开关；此时系统设置里的开关会被锁定 |
+| 环境变量 `SEED_DEMO=true` | 低 | 演示 compose 配置隐含演示环境 |
+| 默认 | — | **关闭** |
+
+```bash
+# 临时开启演示模式
+DEMO_MODE=true docker compose up -d
+
+# 之后随时在系统设置里切换，或用接口：
+curl -X PUT http://127.0.0.1:5181/api/system/demo \
+  -H 'Content-Type: application/json' -b 'session=<你的会话 cookie>' \
+  -d '{"enabled": true}'      # 关闭用 false；{"reset": true} 交回环境变量决定
+```
 
 ---
 
