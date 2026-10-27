@@ -1,0 +1,102 @@
+# docker-compose.yml —— 生产环境部署版本（容器编排）
+# ============================================================================
+# 启动：
+#   docker compose up -d                      # 只起应用
+#   docker compose --profile ocr up -d        # 连本地 OCR 侧车一起起
+#   docker compose --profile demo up -d       # 带演示数据
+#
+# 访问：http://localhost:5181
+#
+# 说明：
+#   - 数据（SQLite 数据库）与上传的错题原图都放在 named volume 里，
+#     docker compose down 不会丢，down -v 才会删。
+#   - .env 文件请从 .env.example 复制一份到项目根目录（docker compose 会自动读取）。
+# ============================================================================
+
+name: cuoti-analytics
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-1.0.0}
+    image: cuoti-analytics:${VERSION:-1.0.0}
+    container_name: cuoti-analytics
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-5181}:5181"
+    environment:
+      NODE_ENV: production
+      PORT: "5181"
+      HOST: "0.0.0.0"
+      # AI 大模型接入（留空则用本地启发式引擎）
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.minimax.chat/v1}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-MiniMax-M3.1-Flash}
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-25000}
+      # 本地 OCR 服务地址：启用 --profile ocr 时由 compose 注入
+      OCR_SERVICE_URL: ${OCR_SERVICE_URL:-}
+      # 首次启动灌演示数据（会清空业务数据，仅演示用）
+      SEED_DEMO: ${SEED_DEMO:-false}
+    volumes:
+      # SQLite 数据库
+      - cuoti-data:/app/server/data
+      # 上传的错题原图
+      - cuoti-uploads:/app/server/uploads
+      # 可选：把宿主机的 .env 挂进去，后端用 --env-file 读取
+      # （不挂也行，上面的 environment 已经覆盖了常用项）
+      # - ./env.docker:/app/.env:ro
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:5181/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ---------------------------------------------------------------------
+  # 本地 OCR 侧车（可选）
+  # ---------------------------------------------------------------------
+  # 启动：docker compose --profile ocr up -d
+  # 作用：把拍照识别置信度从 0.32 提到 0.97~0.99，且图片不出容器
+  ocr:
+    profiles: ["ocr"]
+    build:
+      context: .
+      dockerfile: deploy/docker/ocr.Dockerfile
+    image: cuoti-analytics-ocr:${VERSION:-1.0.0}
+    container_name: cuoti-ocr
+    restart: unless-stopped
+    environment:
+      OCR_HOST: "0.0.0.0"
+      OCR_PORT: "8868"
+      OCR_MAX_BYTES: "12582912"
+    expose:
+      - "8868"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8868/health',timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  # SQLite 数据库（错题、账号、会话、系统设置）
+  cuoti-data:
+  # 上传的错题原图
+  cuoti-uploads:

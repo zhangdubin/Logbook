@@ -260,6 +260,37 @@ curl -s http://127.0.0.1:5181/api/version  # 当前版本号
 详细的部署步骤、环境变量表、nginx/HTTPS 配置、回滚方法与故障排查见
 [docs/05 · 开发与部署指南](docs/05-开发与部署指南.md)。
 
+### Docker 容器部署
+
+```bash
+# 构建镜像（VERSION / COMMIT 会写进容器里的版本信息）
+docker build -t cuoti-analytics:1.0.0 \
+  --build-arg VERSION=1.0.0 --build-arg COMMIT=$(git rev-parse --short HEAD) .
+
+# 直接跑
+docker run -d --name cuoti -p 5181:5181 \
+  -v cuoti-data:/app/server/data \
+  -v cuoti-uploads:/app/server/uploads \
+  cuoti-analytics:1.0.0
+
+# 或者用 compose
+docker compose up -d                          # 只起应用
+docker compose --profile ocr up -d            # 连本地 OCR 侧车一起起
+SEED_DEMO=true docker compose up -d           # 带演示数据（首次启动自动灌）
+docker compose logs -f
+docker compose down                          # 停止（数据保留）
+docker compose down -v                       # 停止并删卷（⚠️ 数据丢失）
+```
+
+镜像基于 `node:24-alpine` **两阶段构建**：builder 阶段编译前端，runtime 阶段只带生产依赖，
+以非 root 用户运行，带 `HEALTHCHECK`，数据库与上传图片都在 named volume 里持久化。
+
+| 卷 | 内容 |
+| --- | --- |
+| `cuoti-data` | SQLite 数据库（错题、账号、会话、系统设置） |
+| `cuoti-uploads` | 上传的错题原图 |
+| `ocr-models` | OCR 模型缓存（仅 `--profile ocr` 时用） |
+
 ---
 
 ## 📖 文档索引

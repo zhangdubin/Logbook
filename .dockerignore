@@ -1,0 +1,49 @@
+# .dockerignore —— 构建镜像时排除的文件
+#
+# 注意：builder 阶段需要 src/、public/、index.html、vite.config.ts、tsconfig*.json，
+# 所以这些**不能**排除（运行时阶段是按路径选择性 COPY 的，不进最终镜像）。
+# 这里排除的只是「谁都不需要」的东西。
+
+# ---- 依赖与构建缓存 ----
+node_modules
+npm-debug.log*
+yarn-error.log*
+.pnpm-store
+
+# ---- 版本控制 ----
+.git
+.gitignore
+.github
+
+# ---- 前端构建产物（镜像里由 builder 阶段重新生成，不用宿主的） ----
+dist
+.vite
+.cache
+
+# ---- 运行时数据（必须由数据卷承载，绝不能进镜像） ----
+server/data
+server/uploads
+backups
+deploy-dist
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# ---- 密钥与本地配置 ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- 运行时不需要的源码与文档（builder 与 runtime 都不 COPY 它们） ----
+docs
+scripts
+
+# ---- 平台杂物 ----
+.DS_Store
+Thumbs.db
+._*
+.idea
+.vscode

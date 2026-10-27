@@ -51,6 +51,13 @@ const REPO = opt('--repo', process.env.GITHUB_REPO || '')
 /* -------------------------------------------------------------------------- */
 
 /** 这些目录/文件不进部署包 */
+/**
+ * 需要可执行位的脚本：*.sh 与 scripts/ 下的 .mjs。
+ * 注意不要笼统地匹配 .js —— server/ 下的 .js 是被 node 加载的模块，
+ * 不需要可执行位。
+ */
+const SCRIPT_RE = /(^|\/)(scripts\/[^/]+\.mjs|[^/]+\.sh)$/
+
 const SKIP_DIRS = new Set([
   'node_modules', '.git', '.cache', '.vite', 'coverage', '.turbo',
   'backups', 'deploy-dist', 'dist-package',
@@ -173,7 +180,10 @@ for (const f of files) {
     name: `${topName}/${f.name}`,
     type: '0',
     data: fs.readFileSync(f.path),
-    mode: (fs.statSync(f.path).mode & 0o777) || 0o644,
+    // 统一归一化权限：普通文件 644，脚本 755。
+    // 不直接沿用工作区的权限位 —— 工作区里被某些工具写成 600 的文件，
+    // 打进包里会让服务器上的非 root 用户读不了（Docker 构建时同样会踩）。
+    mode: SCRIPT_RE.test(f.name) ? 0o755 : 0o644,
   })
 }
 // 顶层加一个 VERSION 文件，方便服务器上确认装的是哪个版本

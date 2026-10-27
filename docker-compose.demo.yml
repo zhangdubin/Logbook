@@ -1,0 +1,21 @@
+# docker-compose.demo.yml —— 演示环境覆盖文件
+# ============================================================================
+# 用途：让容器首次启动时自动灌入演示数据（3 名学生 + 60~90 道错题 + 演示账号）。
+#
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d
+#
+# 或者更简单（效果等价）：
+#   SEED_DEMO=true docker compose up -d
+#
+# 注意：
+#   - 只在**数据库还不存在**时灌入；已有数据时会跳过并提示，
+#     避免把线上数据清掉。
+#   - 确需强制重灌（会清空错题与学生数据）：
+#     SEED_DEMO=force docker compose up -d --force-recreate
+# ============================================================================
+
+services:
+  app:
+    environment:
+      SEED_DEMO: "true"

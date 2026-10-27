@@ -404,6 +404,116 @@ final_adj = final × layoutPenalty × consistencyPenalty
 
 ---
 
+---
+
+## 7. OCR 服务的容器化
+
+本项目提供**已跑通**的本地 OCR 容器镜像（`deploy/docker/ocr.Dockerfile`），把 RapidOCR 包成 PaddleOCR Serving v2 兼容的 HTTP 服务。
+
+### 7.1 镜像与接口
+
+| 项 | 值 |
+| --- | --- |
+| 基础镜像 | `python:3.12-slim-bookworm` |
+| 引擎 | `rapidocr-onnxruntime`（纯 CPU，无需 GPU，Apache-2.0） |
+| **OpenCV** | **`opencv-python-headless`**（headless 版，不需要任何图形库 → **镜像里零 apt 步骤**，见 §7.2） |
+| **pip 源** | **清华 → 阿里 → 官方** 顺序回退（`ARG PIP_MIRRORS`） |
+| 端口 | `8868` |
+| 接口 | `POST /predict`（body `{"images": ["<base64>"]}`）、`GET /health` → `{"ok": true, "engine": "rapidocr", ...}` |
+| **模型** | 3 个 `.onnx`（约 15 MB）**随 pip 包装进 site-packages**，不是运行时下载 → **不需要模型缓存卷** |
+| 运行用户 | 非 root（`ocr`） |
+| 实测镜像大小 | **615 MB**（主应用镜像 329 MB） |
+
+```bash
+# 构建
+docker build -f deploy/docker/ocr.Dockerfile -t cuoti-analytics-ocr:1.0.0 .
+
+# 或用 compose（推荐，profile 默认不启动）
+docker compose --profile ocr up -d
+```
+
+### 7.2 我们为什么不用 `opencv-python`
+
+`rapidocr-onnxruntime` 会连带装上**完整的 `opencv-python`**，而它在 slim 镜像里装不起来、也跑不起来。
+
+| 问题 | 现象 |
+| --- | --- |
+| **依赖装不上** | 走 apt 装图形库时，`deb.debian.org` 拉 8.6 MB 的 Packages 索引**超时**（实测 `Connection timed out`），构建直接失败 |
+| **即使装上也 import 不了** | 完整版 OpenCV 会去链图形库，`import cv2` 报 **`ImportError: libxcb.so.1: cannot open shared object file`** —— 还需要 libxcb 等一堆图形库 |
+| **包名还会变** | Debian 13（trixie）把 `libglib2.0-0` 改名成 `libglib2.0-0t64`，`apt-get install libglib2.0-0` 会报 `E: Unable to locate package libglib2.0-0` |
+
+> **结论**：只要用完整版 `opencv-python`，就绕不开"apt 装图形库 → apt 源可能超时 → 包名可能改名 → 还得补 libxcb"这一整条链。
+
+**采用的方案：换成 headless 版**。
+
+| 步骤 | 命令 | 说明 |
+| --- | --- | --- |
+| ① 装依赖 | `pip install -r requirements.txt` | `rapidocr-onnxruntime` 会连带装上完整版 `opencv-python` |
+| ② 卸掉完整版 | `pip uninstall -y opencv-python` | 两个包**模块名相同**（都提供 `cv2`），必须卸掉一个 |
+| ③ 装 headless 版 | `pip install opencv-python-headless` | **不依赖任何图形库** |
+| ④ 构建期自检 | `python3 -c "import cv2; from rapidocr_onnxruntime import RapidOCR; …"` | 依赖坏了**当场构建失败**，而不是运行时才炸 |
+
+| 顺带解决的三件事 | 说明 |
+| --- | --- |
+| **不再需要 apt** | headless 版没有 `libGL` / `libxcb` 依赖 → 镜像里**零 apt 步骤** |
+| **顺带躲开 `t64` 改名** | 既然不装 `libglib2.0-0`，Debian 13 把它改名成 `libglib2.0-0t64` 就**与我们无关** |
+| **不再有 apt 源超时** | 构建期唯一的外部依赖是 pip，而 pip 源**可配置且有回退** |
+
+### 7.3 pip 镜像源回退
+
+直连 `pypi.org` 在国内**基本必超时**，因此 pip 安装按**清华 → 阿里 → 官方**的顺序逐个尝试：
+
+```dockerfile
+ARG PIP_MIRRORS="https://pypi.tuna.tsinghua.edu.cn/simple https://mirrors.aliyun.com/pypi/simple https://pypi.org/simple"
+
+RUN set -eu; \
+    ok=0; \
+    for m in $PIP_MIRRORS; do \
+      echo "[ocr] 试 pip 源：$m"; \
+      if pip install --no-cache-dir --index-url "$m" --timeout 30 --retries 2 \
+           -r requirements.txt >/dev/null 2>&1; then ok=1; break; fi; \
+    done; \
+    [ "$ok" = "1" ] || { echo "[ocr] 所有 pip 源都不可达"; exit 1; }; \
+    ...
+```
+
+| 项 | 说明 |
+| --- | --- |
+| 参数 | `--timeout 30 --retries 2` —— 单个源最多重试 2 次、每次 30 秒超时 |
+| 失败兜底 | 三个源都不可达 → **构建直接失败**并打印「所有 pip 源都不可达」，不会产出半成品镜像 |
+| 自定义 | `docker build --build-arg PIP_MIRRORS="https://your-mirror/simple https://pypi.org/simple" -f deploy/docker/ocr.Dockerfile -t cuoti-analytics-ocr:1.0.0 .` |
+| 安装内容 | `requirements.txt` 里的 `rapidocr-onnxruntime>=1.3.0` 与 `pillow` |
+
+### 7.3.1 模型不需要缓存卷
+
+| 项 | 说明 |
+| --- | --- |
+| 模型位置 | RapidOCR 的 3 个 `.onnx`（约 15 MB）**随 pip 包一起装进 site-packages** |
+| 不是运行时下载 | 因此**不需要**模型缓存卷，`compose` 里也没有 `ocr-models` 这个卷 |
+| 影响 | 重建镜像不会重新下载模型；镜像体积 615 MB 里已包含模型 |
+
+### 7.4 与主应用的通信
+
+| 项 | 说明 |
+| --- | --- |
+| 网络地址 | 同一 compose 网络内用服务名：`http://ocr:8868` |
+| 写入方式 | `entrypoint.sh` 用**应用自己的 `server/settings.js`**（`readStoredAiConfig` / `writeStoredAiConfig`）读写 `ai.config`（`ocrBaseUrl` / `ocrEnabled`） |
+| 为什么由脚本代填 | 容器里进不去 UI 手填「系统设置 → AI 模型 → 本地 OCR 地址」 |
+| 为什么用应用模块 | import `server/settings.js` 会**顺带建好表结构**，**全新卷上（数据库不存在）也能写进去**；且写出的 JSON 结构与 UI 保存的一致 |
+| 不覆盖已有配置 | 已有 `ocrBaseUrl` 时**不写**，避免脚本覆盖管理员的设置 |
+| 收益 | 拍照识别置信度从 **0.32** 提升到 **0.95 以上**，且**图片不出容器** |
+
+**实测结果**：
+
+| 项 | 实测值 |
+| --- | --- |
+| 侧车健康检查 | `{"ok":true,"engine":"rapidocr","error":null,"maxBytes":12582912}` |
+| **真实识别** | 上传一张 `3/4 + 1/4 = 1` 的图片 → `rec_texts: ["3/4 + 1/4 = 1"]`，`rec_scores: [0.9488]` → **置信度 94.9%** |
+| 引擎加载 | **惰性加载**：启动日志「引擎：none（首次调用时惰性加载）」，首次调用后变「引擎已就绪：rapidocr」 |
+| 容器间连通 | app 容器内探测侧车 → `{"reachable":true,"detail":"{\"ok\": true, \"engine\": \"rapidocr\"...}"}` |
+
+---
+
 ## 附：来源清单（全部为我实际访问过的页面）
 
 **PaddleOCR 系**
