@@ -1,0 +1,16 @@
+# 本地 OCR 服务依赖（任选其一即可，推荐第一条：纯 CPU、体积小、中文效果好）
+#
+#   pip install -r requirements.txt
+#
+# 方案 A：RapidOCR —— PaddleOCR 模型转 ONNX，CPU 可跑，无需 GPU，Apache-2.0
+rapidocr-onnxruntime>=1.3.0
+#
+# 方案 B：官方 PaddleOCR —— 版面/表格/公式能力最强，但依赖较重（需 paddlepaddle）
+# paddlepaddle>=2.6.0
+# paddleocr>=2.7.0
+#
+# 方案 C：CnOCR —— 轻量备选
+# cnocr>=2.2.0
+#
+# 图片预处理（强烈建议，RapidOCR/PaddleOCR 都依赖）
+pillow>=9.0.0

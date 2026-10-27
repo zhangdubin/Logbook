@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.local
+server/data/*.db
+server/data/*.db-journal
+server/data/*.db-wal
+server/data/*.db-shm
+server/uploads/*
+!server/uploads/.gitkeep
+server/data/*
+!server/data/.gitkeep
+
+# 在线更新生成的备份目录（每个版本一份，体积大且不该进版本库）
+backups/
+
+# macOS AppleDouble 文件（打包 tar 时会带上，解包器已做过滤）
+._*

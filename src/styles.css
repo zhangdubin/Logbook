@@ -1,0 +1,298 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe6ff;
+  --color-brand-200: #bed1ff;
+  --color-brand-300: #91b0ff;
+  --color-brand-400: #5c85fb;
+  --color-brand-500: #3b63f6;
+  --color-brand-600: #2747eb;
+  --color-brand-700: #1f35d7;
+  --color-brand-800: #1e2daf;
+  --color-brand-900: #1e2c8a;
+
+  --color-ink-50: #f8fafc;
+  --color-ink-100: #f1f5f9;
+  --color-ink-200: #e2e8f0;
+  --color-ink-300: #cbd5e1;
+  --color-ink-400: #94a3b8;
+  --color-ink-500: #64748b;
+  --color-ink-600: #475569;
+  --color-ink-700: #334155;
+  --color-ink-800: #1e293b;
+  --color-ink-900: #0f172a;
+
+  --font-sans: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC',
+    system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 8px 24px -12px rgb(15 23 42 / 0.12);
+  --shadow-pop: 0 10px 40px -12px rgb(15 23 42 / 0.28);
+}
+
+/* ---------------------------------------------------------------------------
+ * 分层说明（Tailwind v4）
+ * ---------------------------------------------------------------------------
+ * Tailwind v4 的层级顺序是 theme → base → components → utilities。
+ * 自定义类若不写进任何层，就属于「无层级样式」，按 CSS 规范它会**压过**
+ * 所有分层样式 —— 于是 `class="tag hidden"` 里的 `hidden` 会被 `.tag` 自己的
+ * `display:inline-flex` 盖掉，元素照样显示出来（手机上顶栏溢出就是这么来的）。
+ * 把自定义类放进 components 层后，工具类（utilities）才能正常覆盖它们。
+ */
+@layer base {
+  :root {
+    color-scheme: light;
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-top: env(safe-area-inset-top, 0px);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #e8efff 0%, transparent 55%),
+      radial-gradient(900px 500px at -10% 10%, #f0f7ff 0%, transparent 50%),
+      #f6f8fc;
+    color: var(--color-ink-800);
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@layer components {
+/* ---------- 通用组件类 ---------- */
+.card {
+  background: rgb(255 255 255 / 0.92);
+  border: 1px solid rgb(226 232 240 / 0.9);
+  border-radius: 1rem;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(6px);
+}
+
+.card-hover {
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-pop);
+  border-color: var(--color-brand-200);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 0.7rem;
+  padding: 0.55rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.2;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.1s ease;
+  white-space: nowrap;
+}
+.btn:active {
+  transform: scale(0.98);
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-brand-600);
+  color: #fff;
+  box-shadow: 0 6px 18px -8px rgb(39 71 235 / 0.7);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-brand-700);
+}
+
+.btn-outline {
+  background: #fff;
+  border-color: var(--color-ink-200);
+  color: var(--color-ink-700);
+}
+.btn-outline:hover:not(:disabled) {
+  border-color: var(--color-brand-300);
+  color: var(--color-brand-700);
+  background: var(--color-brand-50);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--color-ink-600);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--color-ink-100);
+  color: var(--color-ink-900);
+}
+
+.btn-danger {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.btn-danger:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
+.btn-sm {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+  border-radius: 0.55rem;
+}
+.btn-lg {
+  padding: 0.8rem 1.4rem;
+  font-size: 1rem;
+  border-radius: 0.9rem;
+}
+
+.input,
+.select,
+.textarea {
+  width: 100%;
+  border-radius: 0.65rem;
+  border: 1px solid var(--color-ink-200);
+  background: #fff;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.9rem;
+  color: var(--color-ink-800);
+  outline: none;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.input:focus,
+.select:focus,
+.textarea:focus {
+  border-color: var(--color-brand-400);
+  box-shadow: 0 0 0 3px rgb(59 99 246 / 0.14);
+}
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--color-ink-400);
+}
+.textarea {
+  resize: vertical;
+  min-height: 88px;
+  line-height: 1.6;
+}
+.select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  padding-right: 2rem;
+}
+
+.label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-ink-500);
+  margin-bottom: 0.3rem;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.5;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.divider {
+  height: 1px;
+  background: var(--color-ink-100);
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+} /* @layer components 结束 */
+
+/* 动画 */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-fade-up {
+  animation: fade-up 0.28s ease both;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-pop-in {
+  animation: pop-in 0.18s ease both;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.55), transparent);
+  animation: shimmer 1.4s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

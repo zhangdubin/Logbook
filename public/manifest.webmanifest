@@ -1,0 +1,21 @@
+{
+  "name": "错题本 · 学情智能分析系统",
+  "short_name": "错题本",
+  "description": "面向小学与初中学生的错题拍照录入、AI 智能分析与多维学情统计",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f5f7fb",
+  "theme_color": "#0f172a",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "拍照录入错题", "url": "/capture" },
+    { "name": "学情分析报告", "url": "/insights" }
+  ]
+}
