@@ -64,9 +64,13 @@ export function appVersion() {
   if (cached) return cached
   const pkg = readPkg()
   const build = readBuildInfo()
+  // 注意：build.commit 可能是空字符串（Docker 构建时没传 --build-arg COMMIT）。
+  // 这里用 `||` 而不是 `??` —— 空字符串也要回退到 git rev-parse，
+  // 否则会得到一个空提交号，前端只能显示版本号、显示不出短 hash。
+  const commit = String(build.commit ?? '').trim() || gitCommit()
   cached = {
     version: String(pkg.version ?? '0.0.0'),
-    commit: build.commit ?? gitCommit(),
+    commit: commit || null,
     builtAt: build.builtAt ?? null,
   }
   return cached

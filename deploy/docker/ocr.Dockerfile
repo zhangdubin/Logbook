@@ -47,7 +47,7 @@ WORKDIR /app
 # 这里装完之后立刻换成 headless 版（两版都提供 cv2 模块，必须卸掉一个）。
 ARG PIP_MIRRORS="https://pypi.tuna.tsinghua.edu.cn/simple https://mirrors.aliyun.com/pypi/simple https://pypi.org/simple"
 
-COPY --chmod=u=rwX,go=rX ocr-service/requirements.txt ./requirements.txt
+COPY ocr-service/requirements.txt ./requirements.txt
 
 RUN set -eu; \
     ok=0; \
@@ -64,11 +64,16 @@ RUN set -eu; \
     python3 -c "import cv2; from rapidocr_onnxruntime import RapidOCR; print('[ocr] 依赖就绪, opencv', cv2.__version__)"
 
 # --- OCR 服务本体 ---------------------------------------------------------
-COPY --chmod=u=rwX,go=rX ocr-service/ocr_service.py ./ocr_service.py
+COPY ocr-service/ocr_service.py ./ocr_service.py
 
 # --- 非 root 运行 ---------------------------------------------------------
 # 模型随 pip 包一起装在 site-packages 里（约 15 MB），不需要额外的缓存卷
+#
+# 权限用 RUN chmod 归一化而不用 COPY --chmod：
+#   --chmod 是 BuildKit 独有的，没装 buildx 的服务器（classic builder）
+#   会直接报 "the --chmod option requires BuildKit" 而构建失败。
 RUN useradd --system --create-home --shell /usr/sbin/nologin ocr \
+ && chmod 644 requirements.txt ocr_service.py \
  && chown -R ocr:ocr /app
 USER ocr
 
