@@ -204,15 +204,25 @@ BUILD_ARGS=(--build-arg "VERSION=${VERSION}")
 [ -n "$COMMIT" ] && BUILD_ARGS+=(--build-arg "COMMIT=${COMMIT}")
 
 cd "$INSTALL_DIR"
-docker build "${BUILD_ARGS[@]}" -t "cuoti-analytics:${IMAGE_TAG}" . \
-  || fail "镜像构建失败。如果报 the --chmod option requires BuildKit，说明 Docker 版本太老，请升级 Docker Engine"
+# 构建日志留一份，失败时把真正的报错显示出来（别只丢一句猜测）
+BUILD_LOG="$TMP_DIR/build.log"
+if ! docker build "${BUILD_ARGS[@]}" -t "cuoti-analytics:${IMAGE_TAG}" . > "$BUILD_LOG" 2>&1; then
+  fail "镜像构建失败。真正的报错在下面几行：
+$(grep -iE 'error|failed|cannot|denied' "$BUILD_LOG" | tail -6 | sed 's/^/  /')
+  常见原因：
+    - 报 the --chmod option requires BuildKit → Docker 版本太老，请升级 Docker Engine
+    - 报 dial unix ... connect: no such file → Docker 守护进程没在跑，systemctl start docker
+    - 报 no space left on device → 磁盘满了，docker system prune -a 清一下"
+fi
 
 ok "主应用镜像构建完成"
 
 if [ "$WITH_OCR" = "1" ]; then
   step "构建本地 OCR 侧车镜像"
-  docker build -f deploy/docker/ocr.Dockerfile -t "cuoti-analytics-ocr:${IMAGE_TAG}" . \
-    || warn "OCR 侧车构建失败，主应用不受影响（拍照识别会退回默认引擎）"
+  if ! docker build -f deploy/docker/ocr.Dockerfile -t "cuoti-analytics-ocr:${IMAGE_TAG}" . > "$TMP_DIR/ocr-build.log" 2>&1; then
+    warn "OCR 侧车构建失败，主应用不受影响（拍照识别会退回默认引擎）"
+    grep -iE 'error|failed|cannot' "$TMP_DIR/ocr-build.log" | tail -4 | sed 's/^/    /'
+  fi
   ok "OCR 侧车镜像构建完成"
 fi
 
