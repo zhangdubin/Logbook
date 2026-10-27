@@ -13,6 +13,7 @@ import { AlertBox, Spinner } from '@/components/ui'
 import { ApiRequestError } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 import { useToast } from '@/store/toast'
+import { formatVersion, useAppVersion } from '@/features/auth/useVersion'
 
 /* ---------------------------- 演示账号 ---------------------------- */
 
@@ -76,6 +77,9 @@ export default function Login() {
   const location = useLocation()
   const { login, user, loading: authLoading } = useAuth()
   const { push } = useToast()
+  /** 版本号（装饰性信息，拿不到就静默不显示） */
+  const appVersion = useAppVersion()
+  const versionLabel = formatVersion(appVersion)
 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -310,6 +314,11 @@ export default function Login() {
           <p className="mt-6 text-center text-[11px] text-ink-400">
             🔒 数据存储在本机，图片不出校 · 四级权限分级管理
           </p>
+
+          {/* 版本号（低对比度小字，不抢表单视觉重心；取不到则整行不渲染） */}
+          {versionLabel && (
+            <p className="mt-1 break-all text-center text-[11px] text-ink-400">{versionLabel}</p>
+          )}
         </div>
       </main>
     </div>

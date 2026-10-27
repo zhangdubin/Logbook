@@ -7,7 +7,7 @@
  *
  * 中间件顺序（**鉴权的关键**）：
  *   1. cors / express.json
- *   2. GET /api/health          —— 公开（不泄露敏感信息）
+ *   2. GET /api/health、/api/version —— 公开（不泄露敏感信息）
  *   3. /api/auth/*              —— login 公开，logout/me/permissions/password 需登录
  *   4. /api/upload/*            —— 显式路由（requireAuth + 文件归属校验）
  *   5. app.use('/api', requireAuth) —— 其余所有 /api 接口一律要求登录
@@ -33,6 +33,7 @@ import { usersRouter } from './routes/users.js'
 import { systemRouter } from './routes/system.js'
 import { ensureAdminUser, pruneExpiredSessions, requireAuth } from './auth.js'
 import { resolveProviderConfig, describeEngineCode, describeActiveEngine } from './ai.js'
+import { appVersion } from './version.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
@@ -56,10 +57,28 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'cuoti-analytics-api',
+    version: appVersion().version,
     time: new Date().toISOString(),
     // 反映**实际生效**的引擎，而不是写死（不含任何密钥）
     ai: describeEngineCode(cfg),
     aiLabel: describeActiveEngine(cfg),
+  })
+})
+
+/* --------------------------- 版本信息（公开） --------------------------- */
+/**
+ * 前端展示版本号用。不含任何敏感信息，因此公开。
+ * 版本号取**运行时真实值**（读 package.json），而不是打包时写死的常量 ——
+ * 因为「一键更新」之后前端 dist 可能没重建，只有后端知道当前真实版本。
+ */
+app.get('/api/version', (_req, res) => {
+  const v = appVersion()
+  res.json({
+    name: '错题本 · 学情智能分析系统',
+    version: v.version,
+    commit: v.commit,
+    builtAt: v.builtAt,
+    node: process.version,
   })
 })
 

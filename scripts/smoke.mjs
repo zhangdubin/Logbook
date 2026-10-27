@@ -138,6 +138,35 @@ async function main() {
   const health = await get('/api/health').catch(() => null)
   check('后端可达', health !== null, health ? `HTTP ${health.status}` : '连接失败')
 
+  /* ---------- 版本号（前端展示用，公开端点） ---------- */
+  section('版本信息')
+  const ver = await get('/api/version').catch(() => null)
+  check(
+    'GET /api/version 返回版本号',
+    ver?.status === 200 && typeof ver.json?.version === 'string' && ver.json.version.length > 0,
+    ver ? `HTTP ${ver.status} version=${ver.json?.version}` : '连接失败',
+  )
+  check(
+    '版本号符合 semver 形态',
+    /^\d+\.\d+\.\d+/.test(ver?.json?.version ?? ''),
+    ver?.json?.version ?? '(无)',
+  )
+  check(
+    'GET /api/version 无需登录即可访问',
+    ver?.status === 200,
+    `HTTP ${ver?.status}`,
+  )
+  check(
+    'health 也带版本号',
+    typeof health?.json?.version === 'string' && health.json.version.length > 0,
+    `version=${health?.json?.version}`,
+  )
+  check(
+    '版本接口不泄露敏感信息',
+    ver?.json && !('token' in ver.json) && !('apiKey' in ver.json),
+    Object.keys(ver?.json ?? {}).join(','),
+  )
+
   /* ---------- 认证与权限 ---------- */
   section('认证与权限')
   const anon = await get('/api/students')

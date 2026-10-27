@@ -1,0 +1,50 @@
+# deploy/cuoti-analytics.service —— systemd 服务单元
+#
+# install.sh 会把 __INSTALL_DIR__ / __SERVICE_USER__ / __PORT__ 替换成实际值。
+#
+# 手动安装：
+#   sudo cp deploy/cuoti-analytics.service /etc/systemd/system/
+#   sudo sed -i 's#__INSTALL_DIR__#/opt/cuoti-analytics#g' /etc/systemd/system/cuoti-analytics.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cuoti-analytics
+
+[Unit]
+Description=错题本 · 学情智能分析系统
+Documentation=https://github.com/zhangdubin/Logbook
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+Group=__SERVICE_USER__
+WorkingDirectory=__INSTALL_DIR__
+
+# Node 20+ 用 --env-file 读 .env；不支持时用 EnvironmentFile（下面已配）
+ExecStart=/usr/bin/env node --env-file-if-exists=__INSTALL_DIR__/.env server/index.js
+
+# .env 里没有的变量也可以走这里（优先级低于 .env）
+EnvironmentFile=-__INSTALL_DIR__/.env
+Environment=NODE_ENV=production
+Environment=PORT=__PORT__
+
+# 重启策略
+Restart=always
+RestartSec=3
+# 反复失败 5 次就停下来，避免无限重启刷日志
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__INSTALL_DIR__/server/data __INSTALL_DIR__/server/uploads __INSTALL_DIR__/backups
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cuoti-analytics
+
+[Install]
+WantedBy=multi-user.target

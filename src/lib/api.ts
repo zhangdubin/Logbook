@@ -82,6 +82,17 @@ async function request<T>(
 
 const json = (body: unknown) => JSON.stringify(body)
 
+/** 应用版本信息（公开端点 `GET /api/version`） */
+export interface AppVersion {
+  name: string
+  version: string
+  /** git 短 sha，可能为 null */
+  commit: string | null
+  /** 构建时间，可能为 null */
+  builtAt: string | null
+  node: string
+}
+
 export const api = {
   /* -------- 学生 -------- */
   listStudents: () => request<Student[]>('/students'),
@@ -172,6 +183,8 @@ export const api = {
   me: () => request<LoginResult>('/auth/me'),
   /** 权限矩阵（权限点 → 允许角色） */
   permissionMatrix: () => request<PermissionMatrix>('/auth/permissions'),
+  /** 版本信息（公开端点，不需要登录；失败应静默忽略） */
+  getVersion: () => request<AppVersion>('/version'),
   /** 自助改密：需提供旧密码，改密后作废该账号其它会话 */
   changePassword: (currentPassword: string, newPassword: string) =>
     request<{ ok: boolean }>(

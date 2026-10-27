@@ -201,9 +201,62 @@ export AI_API_KEY="ollama"                          # 本地无需真实密钥
 | `npm run seed` | 生成演示数据（3 名学生 × 60–90 道错题 + **4 个演示账号**；**会清空已有数据**） |
 | `npm run typecheck` | TypeScript 类型检查（`tsc --noEmit`） |
 | `npm run build` | 类型检查 + 生产构建到 `dist/` |
-| `npm run smoke` | 接口契约自检（34 项断言，需后端已启动） |
+| `npm run build:deploy` | 生成**生产环境部署版本**到 `deploy-dist/`（含已构建的 `dist/`） |
+| `npm run deploy:publish` | 生成部署版本并上传为 GitHub Release 附加资产（需 `GITHUB_TOKEN`） |
+| `npm run smoke` | 接口契约自检（102 项断言，需后端已启动） |
 | `npm start` | 生产启动：Express 同时托管 API 与前端产物（含 SPA 回退） |
 | `npm run preview` | 仅预览 `dist/` 静态产物（不含后端） |
+
+---
+
+## ☁️ 云服务器部署
+
+### 一键安装（从 GitHub 拉取）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhangdubin/Logbook/main/deploy/install.sh | sudo bash
+```
+
+指定版本与安装目录：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhangdubin/Logbook/main/deploy/install.sh \
+  | sudo bash -s -- --repo zhangdubin/Logbook --version 1.0.0 --dir /opt/cuoti-analytics
+```
+
+安装脚本会自动完成：检查 Node 20+ → 查 GitHub Release → 下载并校验 sha256 → 安装到
+`/opt/cuoti-analytics` → 装生产依赖 → 生成 `.env` → 初始化数据库 → 注册 systemd 服务
+→ 配置 nginx 反向代理 → 健康检查。
+
+### 升级
+
+```bash
+sudo bash /opt/cuoti-analytics/deploy/upgrade.sh          # 升到最新版本
+sudo bash /opt/cuoti-analytics/deploy/upgrade.sh --version 1.1.0
+```
+
+升级会**保留**数据库（`server/data/`）、上传图片（`server/uploads/`）和 `.env`，
+只替换程序文件；升级前自动备份到 `backups/`。
+
+### 常用运维命令
+
+```bash
+systemctl status  cuoti-analytics     # 查看状态
+systemctl restart cuoti-analytics     # 重启
+journalctl -u cuoti-analytics -f      # 实时日志
+curl -s http://127.0.0.1:5181/api/health   # 健康检查
+curl -s http://127.0.0.1:5181/api/version  # 当前版本号
+```
+
+### 两种发布包的分工
+
+| 包 | 文件名 | 内容 | 用途 |
+| --- | --- | --- | --- |
+| 源码包 | `cuoti-analytics-v1.0.0.tar.gz` | 全部源码（不含 `dist/`） | Git 历史、二次开发 |
+| **部署版本** | `cuoti-analytics-v1.0.0-deploy.tar.gz` | 源码 + **已构建好的 `dist/`** + `deploy/` | **服务器直接跑，无需装构建工具链** |
+
+详细的部署步骤、环境变量表、nginx/HTTPS 配置、回滚方法与故障排查见
+[docs/05 · 开发与部署指南](docs/05-开发与部署指南.md)。
 
 ---
 

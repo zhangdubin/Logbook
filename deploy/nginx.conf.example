@@ -1,0 +1,81 @@
+# deploy/nginx.conf.example —— nginx 反向代理示例
+#
+# install.sh 会把 __DOMAIN__ / __PORT__ 替换成实际值，默认写入
+# /etc/nginx/conf.d/cuoti-analytics.conf
+#
+# 手动配置：
+#   sudo cp deploy/nginx.conf.example /etc/nginx/conf.d/cuoti-analytics.conf
+#   sudo sed -i 's#__DOMAIN__#cuoti.example.com#g; s#__PORT__#5181#g' /etc/nginx/conf.d/cuoti-analytics.conf
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# 生产环境务必配 HTTPS（certbot --nginx -d 你的域名）
+
+upstream cuoti_analytics {
+    server 127.0.0.1:__PORT__;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __DOMAIN__;
+
+    # 证书申请（certbot）需要这个目录
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    # 上传错题原图可能比较大
+    client_max_body_size 30m;
+
+    # 静态资源
+    location /assets/ {
+        proxy_pass http://cuoti_analytics;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # 接口与页面
+    location / {
+        proxy_pass http://cuoti_analytics;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection        "";
+
+        # 一键更新 / 发布可能耗时较久
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_connect_timeout 15s;
+
+        proxy_buffering off;
+    }
+}
+
+# ---- HTTPS：certbot --nginx -d 你的域名 之后会自动补上下面这段 ----
+# server {
+#     listen 443 ssl http2;
+#     server_name __DOMAIN__;
+#
+#     ssl_certificate     /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+#     ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+#
+#     client_max_body_size 30m;
+#
+#     location / {
+#         proxy_pass http://cuoti_analytics;
+#         proxy_http_version 1.1;
+#         proxy_set_header Host              $host;
+#         proxy_set_header X-Real-IP         $remote_addr;
+#         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto $scheme;
+#         proxy_set_header Connection        "";
+#         proxy_read_timeout 600s;
+#         proxy_buffering off;
+#     }
+# }

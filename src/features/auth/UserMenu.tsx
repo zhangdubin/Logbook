@@ -20,10 +20,14 @@ import api, { ApiRequestError } from '@/lib/api'
 import { useAuth } from '@/store/auth'
 import { useToast } from '@/store/toast'
 import { roleTone } from './roleMeta'
+import { formatVersion, useAppVersion } from './useVersion'
 
 export function UserMenu({ compact = false }: { compact?: boolean }) {
   const { user, logout, refresh, hasPermission, hasRole } = useAuth()
   const { push } = useToast()
+  /** 版本号（装饰性信息，拿不到就静默不显示；与 user 是否加载完无关） */
+  const appVersion = useAppVersion()
+  const versionLabel = formatVersion(appVersion)
 
   const [open, setOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
@@ -148,11 +152,18 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
             type="button"
             role="menuitem"
             disabled={loggingOut}
-            className="flex w-full items-center gap-2 border-t border-ink-100 px-3 py-2.5 text-left text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-60"
+            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-60"
             onClick={() => void doLogout()}
           >
             {loggingOut ? '正在退出…' : '🚪 退出登录'}
           </button>
+
+          {/* 版本号（低调的一行，取不到则不渲染） */}
+          {versionLabel && (
+            <p className="break-all border-t border-ink-100 px-3 py-2 text-[10px] text-ink-400">
+              {versionLabel}
+            </p>
+          )}
         </div>
       )}
 

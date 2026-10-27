@@ -18,3 +18,5 @@ backups/
 
 # macOS AppleDouble 文件（打包 tar 时会带上，解包器已做过滤）
 ._*
+server/build-info.json
+deploy-dist/

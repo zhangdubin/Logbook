@@ -13,7 +13,10 @@
     "start": "node --env-file-if-exists=.env server/index.js",
     "typecheck": "tsc --noEmit",
     "seed": "node server/seed.js",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "build:deploy": "node scripts/build-deploy.mjs",
+    "deploy:pack": "node scripts/build-deploy.mjs",
+    "deploy:publish": "node scripts/build-deploy.mjs --upload"
   },
   "dependencies": {
     "cors": "^2.8.5",
