@@ -573,6 +573,16 @@ async function main() {
   const settings0 = await get('/api/settings/ai')
   check('GET /api/settings/ai 返回设置对象', hasKeys(settings0.json, ['provider', 'baseUrl', 'apiKey', 'model', 'hasApiKey', 'activeEngine']))
 
+  // 记下测试前的「本地 OCR 地址」。
+  // 这一节最后会 DELETE /api/settings/ai「恢复默认」，而 ocrBaseUrl / ocrEnabled
+  // 和模型配置**存在同一行** ai.config 里 —— 一删就把用户的 OCR 地址也删了，
+  // 用户的本地 OCR 侧车从此配不上了，界面里还得手填一遍。
+  // 所以测完要把 OCR 地址原样写回去。
+  const ocrBefore = {
+    ocrBaseUrl: settings0.json?.ocrBaseUrl ?? '',
+    ocrEnabled: settings0.json?.ocrEnabled === true,
+  }
+
   const saved = await send('PUT', '/api/settings/ai', {
     provider: 'minimax',
     baseUrl: 'https://api.minimax.chat/v1',
@@ -596,6 +606,19 @@ async function main() {
 
   const reset = await send('DELETE', '/api/settings/ai')
   check('DELETE /api/settings/ai 恢复默认', reset.status === 204 || reset.status === 200, `HTTP ${reset.status}`)
+
+  // 把本地 OCR 地址放回去（DELETE 会把它一起清掉）
+  if (ocrBefore.ocrBaseUrl) {
+    const back = await send('PUT', '/api/settings/ai', {
+      ocrBaseUrl: ocrBefore.ocrBaseUrl,
+      ocrEnabled: ocrBefore.ocrEnabled,
+    })
+    check(
+      '测试后本地 OCR 地址已复原',
+      back.status === 200 && back.json?.ocrBaseUrl === ocrBefore.ocrBaseUrl,
+      `HTTP ${back.status} ocrBaseUrl=${back.json?.ocrBaseUrl ?? '空'}`,
+    )
+  }
 
   /* ---------- 角色数据隔离 ---------- */
   section('角色数据隔离')

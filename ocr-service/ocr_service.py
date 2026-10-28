@@ -290,7 +290,7 @@ def _normalize_size(img: Any) -> Any:
 def _build_variants(image_bytes: bytes) -> list[tuple[str, bytes]]:
     """返回 [(变体名, PNG 字节), ...]；预处理不可用时返回原图。
 
-    变体说明（实测结论见 docs/07 §6）：
+    变体说明（实测数据见 scripts/ocr-bench/ 的基准测试）：
       original   —— 归一化后的彩色图，清晰图/手机拍用它最稳
       clahe      —— 灰度 + CLAHE（clip 2.0），治阴影/光照不均/反光，hard 档救命
       clahe_soft —— CLAHE 弱一点（clip 1.5），避免过度增强吃掉细笔画
@@ -477,7 +477,7 @@ def _ocr_variant(engine: Any, name: str, data: bytes, unclip: float) -> dict | N
 def run_ocr(image_bytes: bytes) -> tuple[list[str], list[float], list[dict], str]:
     """跑一次 OCR（含预处理），返回 (texts, scores, lines, variant)。
 
-    策略（实测结论见 docs/07 §6）：
+    策略（实测数据见 scripts/ocr-bench/ 的基准测试）：
       1. **快速路径**：先用「不处理 + 默认外扩」跑一遍。清晰图/普通手机拍一次就够，
          又快又不会被过度处理弄坏（clean/phone 档就是靠它保住分数）。
       2. **兜底**：快速路径的分数不够高（说明图糊/光线差）时，才把

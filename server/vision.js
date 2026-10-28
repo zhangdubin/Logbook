@@ -297,6 +297,7 @@ const SUBJECT_KEYWORDS = {
     '串联', '并联', '磁场', '电功率', '凸透镜', '凹透镜', '焦距', '折射', '光的反射',
     '光的直线传播', '光的色散', '声波', '响度', '音调', '音色', '波长', '超声', '次声',
     '原子核', '质子', '中子', '电流表', '电压表', '量筒', '量杯', '天平', '测力计',
+    '推力', '拉力', '压力', '匀速直线运动', '力的示意图', '受力的示意图', '光的反射',
   ],
   化学: [
     '化学式', '摩尔', '溶液', '沉淀', '氧化还原', '化合价', '元素周期表', '相对原子质量',
@@ -335,6 +336,39 @@ const SUBJECT_KEYWORDS = {
     '合法权益', '道德修养', '孝敬', '感恩',
   ],
 }
+
+/* ---- 数量单位（小学数学应用题的关键信号，汉字写数字题常常没有算式） ---- */
+const QUANTITY_UNITS = [
+  '个', '只', '本', '支', '件', '张', '台', '双', '条', '块', '颗', '粒', '袋', '瓶', '盒',
+  '排', '座', '辆', '架', '艘', '份', '匹', '头', '棵', '朵', '束', '箱', '包', '杯', '碗',
+  '盘', '锅', '桶', '根', '片', '群', '队',
+  '元', '角', '分钱', '千克', '公斤', '克', '斤', '吨', '亩', '升', '毫升', '度', '钱',
+  '米', '厘米', '分米', '千米', '公里', '毫米', '尺',
+  '小时', '分钟', '秒钟', '天', '星期', '周', '年', '月',
+  '人', '倍',
+]
+
+/* ---- 数量型提问（提问词） ---- */
+const QUANTITY_QUESTIONS = [
+  '多少', '几倍', '几人', '几个', '几元', '几米', '几克', '几斤', '几本', '几支', '几只',
+  '几天', '几时', '几秒', '几次', '多高', '多长', '多重', '多快', '多宽', '多厚', '多远',
+  '多贵', '多深',
+]
+
+/* ---- 数量关系词（数学应用题的强特征） ---- */
+const MATH_RELATION_WORDS = [
+  '一共', '总共', '合计', '平均', '剩下', '还剩', '余下', '平均分', '相距', '速度', '时间',
+  '路程', '工作效率', '工作总量', '单价', '总价', '买了', '卖出', '花了', '原来', '增加',
+  '减少', '分成', '至少', '最多', '够买', '能买', '相差',
+]
+
+/* ---- 语文阅读理解强特征 ----
+ * 语文题里夹一两句英文时，靠它把「英语」翻回「语文」。 */
+const CHINESE_READING_WORDS = [
+  '阅读下面', '阅读短文', '读短文', '下面的短文', '这篇短文', '课外阅读', '语段',
+  '短文填空', '概括', '用中文', '写作手法', '回答问题', '中心思想',
+  '加点字', '读音', '抄写', '照样子', '按要求写', '积累与运用', '口语交际',
+]
 
 /* ---- 英语语法词（按整词匹配，命中计 1 分） ---- */
 const ENGLISH_GRAMMAR_WORDS = [
@@ -506,23 +540,102 @@ function computeTextFeatures(raw) {
   }
   if ([...compact].some((ch) => PINYIN_MARKS.includes(ch))) pinyinHits.push('拼音声调符号')
 
+  // 中文数字（「十二块五」「三个」）也算数字
+  let cnNum = 0
+  for (const ch of compact) {
+    if ('零一二三四五六七八九十百千万亿两'.includes(ch)) cnNum++
+  }
+
+  // 英文主导度：拉丁字母 vs 汉字。
+  //   - 语文题里夹一两句英文时，汉字仍占多数；
+  //   - 语文卷里的**拼音**（ ting / xiao ）也不算英文。
+  const englishDominance = (wordLatin + cjk) ? wordLatin / (wordLatin + cjk) : 0
+
   return {
     total,
     digits,
     latin,
     wordLatin,
     cjk,
+    cnNum,
     mathSym,
     cnPunct,
     enPunct,
     digitRatio: digits / total,
+    cnNumRatio: cnNum / total,
+    numberRatio: (digits + cnNum) / total,
     latinRatio: wordLatin / total,
     chineseRatio: cjk / total,
+    englishDominance,
     mathSymbolRatio: mathSym / total,
     englishHits,
     pinyinHits,
     textLength: compact.length,
   }
+}
+
+/* ---- 含单位的复合词（这些里的「单位」不是数量单位，别当数学信号） ---- */
+const UNIT_BLOCKERS = [
+  '经纬度', '纬度', '角度', '温度', '密度', '坡度', '刻度', '浓度', '湿度', '频度',
+  '难度', '长度', '宽度', '高度', '深度', '速度', '进度', '制度', '态度', '季度',
+  '月底', '年初', '中午', '下午', '今天', '明天', '昨天', '今年', '去年', '明年',
+  '星期', '常见', '有限', '无线', '有点', '看点', '制度', '角度',
+]
+
+/**
+ * 找出文本里的数量单位，并排除两类误报：
+ *   1. 复合词里的「单位」（经纬度、温度、速度…）；
+ *   2. 离「提问词」太远的单位 —— 「一辆小车…摩擦力是多少」里的「辆」不是数量信号。
+ */
+function findUnitHits(text, units, questionPositions, maxDistance = 10) {
+  const hits = []
+  for (const u of units) {
+    let from = 0
+    for (;;) {
+      const i = text.indexOf(u, from)
+      if (i < 0) break
+      from = i + 1
+      const inBlocker = UNIT_BLOCKERS.some((b) => {
+        const off = b.indexOf(u)
+        if (off < 0) return false
+        const start = i - off
+        return start >= 0 && text.slice(start, start + b.length) === b
+      })
+      if (inBlocker) continue
+      if (questionPositions.length) {
+        const near = questionPositions.some((q) => Math.abs(q - i) <= maxDistance)
+        if (!near) continue
+      }
+      hits.push(u)
+      break
+    }
+  }
+  return hits
+}
+
+/**
+ * 长词优先的贪心匹配：返回互不重叠的命中 [{word, start, end}]。
+ * 避免「速度」和「加速度」、「阅读下面」和「短文」这种包含关系被重复计分。
+ */
+function matchPhrases(text, phrases) {
+  const sorted = [...phrases].sort((a, b) => b.length - a.length)
+  const taken = []
+  const hits = []
+  for (const p of sorted) {
+    if (!p) continue
+    let from = 0
+    for (;;) {
+      const i = text.indexOf(p, from)
+      if (i < 0) break
+      const end = i + p.length
+      if (!taken.some(([s, e]) => i < e && end > s)) {
+        taken.push([i, end])
+        hits.push({ word: p, start: i, end })
+      }
+      from = i + 1
+    }
+  }
+  return hits
 }
 
 /** 归一化学科名（非法值返回空串） */
@@ -565,14 +678,22 @@ export function inferSubjectFromText(text, lines = []) {
     return bag[subject]
   }
 
-  // 1) 词表命中
+  // 1) 词表命中（长词优先，避免「速度」和「加速度」重复计分）
   for (const [subject, words] of Object.entries(SUBJECT_KEYWORDS)) {
     const slot = ensure(subject)
-    for (const w of words) {
-      if (compact.includes(w)) {
-        slot.score += 1
-        slot.evidence.push(w)
-      }
+    for (const h of matchPhrases(compact, words)) {
+      slot.score += 1
+      slot.evidence.push(h.word)
+    }
+  }
+
+  // 1b) 语文阅读理解强特征（语文题夹一两句英文时靠它翻盘）
+  {
+    const slot = ensure('语文')
+    const hits = matchPhrases(compact, CHINESE_READING_WORDS)
+    if (hits.length) {
+      slot.score += Math.min(3.6, 1.2 * hits.length)
+      slot.evidence.push(...hits.slice(0, 3).map((h) => h.word))
     }
   }
 
@@ -587,26 +708,66 @@ export function inferSubjectFromText(text, lines = []) {
     slot.score += 1.2
     slot.evidence.push(`数字占比 ${(feats.digitRatio * 100).toFixed(0)}%`)
   }
-  // 数量型提问（多少/几倍/几人）+ 数字 -> 数学应用题
-  if (feats.digitRatio >= 0.03 && /多少|几倍|几人|几个|几元|几米|几克/.test(compact)) {
+
+  // 2b) 数量型信号 —— 小学数学应用题常常是**纯文字**（没有算式、没有阿拉伯数字），
+  //     所以这一组信号**不依赖数字占比**。
+  {
     const slot = ensure('数学')
-    slot.score += 1.0
-    slot.evidence.push('数量型提问')
+    const qtyHits = []
+    const qtyPositions = []
+    for (const w of QUANTITY_QUESTIONS) {
+      let from = 0
+      for (;;) {
+        const i = compact.indexOf(w, from)
+        if (i < 0) break
+        qtyHits.push(w)
+        qtyPositions.push(i)
+        from = i + w.length
+      }
+    }
+    const unitHits = findUnitHits(compact, QUANTITY_UNITS, qtyPositions)
+    const relHits = MATH_RELATION_WORDS.filter((w) => compact.includes(w))
+    const moreLess = /比.{1,8}[多少]/.test(compact)
+    if (qtyHits.length && unitHits.length) {
+      slot.score += 2.0
+      slot.evidence.push(`数量型提问（${qtyHits[0]}）`)
+      slot.evidence.push(`数量单位（${unitHits.slice(0, 3).join('、')}）`)
+    } else if (qtyHits.length) {
+      slot.score += 0.8
+      slot.evidence.push(`数量型提问（${qtyHits[0]}）`)
+    }
+    if (relHits.length || moreLess) {
+      slot.score += Math.min(1.6, 0.6 + 0.4 * (relHits.length + (moreLess ? 1 : 0)))
+      slot.evidence.push(`数量关系词（${relHits.slice(0, 3).join('、') || '比…多/少'}）`)
+    }
+    if (feats.cnNumRatio >= 0.02) {
+      slot.score += 0.6
+      slot.evidence.push(`中文数字占比 ${(feats.cnNumRatio * 100).toFixed(0)}%`)
+    }
   }
-  if (feats.latinRatio >= 0.15) {
+
+  // 2c) 英语信号 —— 全部按「英文主导度」打折：
+  //     语文题里夹一两句英文、语文卷里的拼音，都不该被当成英语。
+  {
+    const dom = feats.englishDominance
     const slot = ensure('英语')
-    slot.score += 2.6
-    slot.evidence.push(`字母占比 ${(feats.latinRatio * 100).toFixed(0)}%`)
+    const domFactor = Math.max(0, Math.min(1, (dom - 0.35) / 0.35))
+    if (feats.latinRatio >= 0.15 && domFactor > 0) {
+      slot.score += 2.6 * domFactor
+      slot.evidence.push(`字母占比 ${(feats.latinRatio * 100).toFixed(0)}%`)
+    }
+    if (feats.latinRatio >= 0.35 && dom > 0.6) {
+      slot.score += 1.4 * Math.max(0, Math.min(1, (dom - 0.6) / 0.25))
+    }
+    if (feats.englishHits.length >= 2) {
+      const f = Math.max(0, Math.min(1, (dom - 0.45) / 0.3))
+      if (f > 0) {
+        slot.score += 1.6 * f
+        slot.evidence.push(...feats.englishHits.slice(0, 3))
+      }
+    }
   }
-  if (feats.latinRatio >= 0.35) {
-    const slot = ensure('英语')
-    slot.score += 1.4
-  }
-  if (feats.englishHits.length >= 2) {
-    const slot = ensure('英语')
-    slot.score += 1.6
-    slot.evidence.push(...feats.englishHits.slice(0, 3))
-  }
+
   if (feats.pinyinHits.length) {
     const slot = ensure('语文')
     slot.score += 2.4
@@ -614,13 +775,15 @@ export function inferSubjectFromText(text, lines = []) {
   }
   // 中文标点 + 英文标点混排（英语试卷的典型特征）—— 只能**佐证**，不能单独定罪
   if (feats.enPunct >= 2 && feats.cnPunct >= 1
+    && feats.englishDominance >= 0.5
     && (feats.latinRatio >= 0.1 || feats.englishHits.length >= 1)) {
     const slot = ensure('英语')
     slot.score += 0.8
     slot.evidence.push('中英文标点混排')
   }
-  // 汉字占比高且没有任何学科词：语文的弱信号
-  if (feats.chineseRatio >= 0.6 && feats.latinRatio < 0.05 && feats.mathSymbolRatio < 0.005) {
+  // 汉字占比高且没有英文主导 -> 语文的弱信号
+  if (feats.chineseRatio >= 0.6 && feats.englishDominance < 0.4
+    && feats.mathSymbolRatio < 0.005) {
     const slot = ensure('语文')
     slot.score += 0.5
   }
@@ -635,15 +798,26 @@ export function inferSubjectFromText(text, lines = []) {
   }
 
   const total = entries.reduce((a, e) => a + e.score, 0)
-  const top = entries[0]
-  const second = entries[1]
+  let top = entries[0]
+  let second = entries[1]
   let confidence = top.score / total
+
+  // 语文 / 英语 咬得紧时：题干里汉字更多就判语文（语文阅读题夹一两句英文的常见形态）
+  if (top.subject === '英语' && second && second.subject === '语文'
+    && (top.score - second.score) / top.score < 0.25
+    && feats.chineseRatio >= 0.25) {
+    top = second
+    second = entries[0]
+    confidence = top.score / total
+  }
 
   // 证据薄弱 -> 压低置信度
   if (feats.textLength < 8) confidence = Math.min(confidence, 0.4)
   else if (feats.textLength < 12) confidence *= 0.7
-  // 前两名咬得紧 -> 压低置信度
-  if (second && (top.score - second.score) / top.score < 0.2) confidence *= 0.7
+  // 前两名咬得紧 -> 直接压到 0.44 以下（前端 < 50% 显示琥珀色警示，让用户去确认）
+  if (second && (top.score - second.score) / top.score < 0.2) {
+    confidence = Math.min(confidence * 0.7, 0.44)
+  }
   // 纯数字无运算符 -> 数学判定也要打折（可能只是编号/名单）
   if (top.subject === '数学' && feats.digitRatio > 0.5 && feats.mathSymbolRatio < 0.005) {
     confidence = Math.min(confidence, 0.35)

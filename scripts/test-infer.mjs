@@ -174,7 +174,7 @@ const edgeCases = [
   { name: '纯数字无运算符', text: '1234 5678 9012' },
   { name: '极短文本', text: '求' },
   { name: '空白', text: '   ' },
-  { name: '两学科特征各半（语文+英语）', text: 'read the passage 完成下列阅读理解任务 read the passage and answer' },
+  { name: '两学科特征各半（物理+化学）', text: '水的密度 溶液浓度' },
 ]
 for (const e of edgeCases) {
   const r = inferSubjectFromText(e.text)
@@ -184,6 +184,43 @@ for (const e of edgeCases) {
   check(`${e.name} 低置信度`, r.confidence <= 0.45, `实际 ${r.confidence}`)
 }
 eq('空白文本无学科', inferSubjectFromText('   ').subject, '')
+
+/* ---- Lead 反馈的两条误判（2026-10-28） ---- */
+console.log('\n=== 误判回归（Lead 反馈）===')
+const regressions = [
+  {
+    name: '纯文字数学应用题 → 数学',
+    text: '小明买了一些苹果和梨，一共花了十二块五，问他一共买了多少个水果？',
+    expect: '数学',
+    minConf: 0.6,
+  },
+  {
+    name: '语文阅读题夹英文 → 语文',
+    text: '四、阅读下面的短文，回答问题。What is the main idea of the passage? 这篇短文主要讲了什么？请用中文概括。',
+    expect: '语文',
+    minConf: 0.6,
+  },
+  {
+    name: '语文卷里的拼音不算英语 → 语文',
+    text: '四、给下列加点字选择正确读音。停（ting / ding）削（xue / xiao）载（zai / zai）抄写下面的词语，并造一个句子。',
+    expect: '语文',
+    minConf: 0.45,
+  },
+  {
+    name: '英语阅读题（英文为主）→ 英语',
+    text: 'Read the passage and choose the best answer. What is Tom doing? He is reading a book.',
+    expect: '英语',
+    minConf: 0.6,
+  },
+]
+for (const c of regressions) {
+  const r = inferSubjectFromText(c.text)
+  console.log(
+    `  ${c.name.padEnd(30)} → ${String(r.subject || '（无法判定）').padEnd(4)}  置信度 ${r.confidence.toFixed(2)}  依据: ${(r.evidence || []).join(', ')}`,
+  )
+  eq(`${c.name} 学科`, r.subject, c.expect)
+  check(`${c.name} 置信度 >= ${c.minConf}`, r.confidence >= c.minConf, `实际 ${r.confidence}`)
+}
 
 /* -------------------------------------------------------------------------- */
 /* 2. 题型判定                                                                 */

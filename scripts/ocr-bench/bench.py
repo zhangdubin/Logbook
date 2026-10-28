@@ -50,7 +50,24 @@ def api_subject(api_base, cookie_file, data_url, timeout=180):
     if not api_base or not cookie_file or not os.path.exists(cookie_file):
         return None
     try:
-        ck = open(cookie_file).read().strip()
+        # cookie 文件可能是两种格式：
+        #   1) curl 的 Netscape cookie jar（#HttpOnly_ 前缀 + 制表符分隔）
+        #   2) 一整行 Cookie 头（name=value; name=value）
+        raw = open(cookie_file, encoding='utf-8', errors='ignore').read()
+        pairs = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith('#') and not line.startswith('#HttpOnly_'):
+                continue
+            if line.startswith('#HttpOnly_'):
+                line = line[len('#HttpOnly_'):]
+            if '\t' in line:
+                parts = line.split('\t')
+                if len(parts) >= 7:
+                    pairs.append(f'{parts[5]}={parts[6]}')
+            elif '=' in line and ' ' not in line.split('=')[0]:
+                pairs.append(line)
+        ck = '; '.join(pairs) if pairs else raw.strip()
         body = json.dumps({"image": data_url}).encode()
         req = urllib.request.Request(f'{api_base}/api/analyze/photo', data=body,
                                      headers={'Content-Type': 'application/json', 'Cookie': ck})
