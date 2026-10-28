@@ -131,17 +131,19 @@ const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v)
 const hasKeys = (v, keys) => isObj(v) && keys.every((k) => k in v)
 
 /**
- * 演示数据自检 + 自愈。
+ * 演示数据自检。
  *
  * 为什么需要：后面有一批用例依赖演示数据（3 名学生、家长关联到其中一名、
  * 227 道错题）。数据库要是处于「半个种子」状态（比如之前灌种子时被中断过），
  * 这些用例会以一种完全看不懂的方式失败 —— 比如「家长只看到自己关联的学生：
  * 0/1 名学生」，看着像权限 bug，其实是数据没灌全。
  *
- * 所以这里先检查，缺了就重新灌一遍。
+ * ⚠️ **只读检查，绝不自动灌种子。**
+ * server/seed.js 里有 `DELETE FROM questions` / `DELETE FROM students`，
+ * 它会**清空全部错题与学生**。测试脚本擅自执行它 = 擅自删用户数据，
+ * 绝对不能干。所以这里只提示，让人自己决定要不要灌。
  */
 async function ensureDemoData() {
-  // 演示数据不完整的表现：学生数少于 3，或家长关联不到任何学生
   const probe = await (async () => {
     const jar = new Map()
     const login = await fetch(`${BASE}/api/auth/login`, {
@@ -166,20 +168,12 @@ async function ensureDemoData() {
   if (probe.length >= 3) return
 
   console.log(
-    `  \x1b[33m!\x1b[0m 演示数据不完整（只有 ${probe.length} 名学生），正在重新灌种子数据…`,
+    `  \x1b[33m!\x1b[0m 演示数据不完整（只有 ${probe.length} 名学生，部分用例会失败）。` +
+      `如需完整演示数据，请自行执行：npm run seed`,
   )
-  const { spawnSync } = await import('node:child_process')
-  const seed = spawnSync(process.execPath, ['server/seed.js'], {
-    cwd: process.cwd(),
-    encoding: 'utf8',
-  })
-  if (seed.status === 0) {
-    console.log('  \x1b[32m✓\x1b[0m 演示数据已重新灌好')
-  } else {
-    console.log(
-      `  \x1b[31m!\x1b[0m 重新灌种子数据失败：${(seed.stderr || '').split('\n')[0] ?? '未知错误'}`,
-    )
-  }
+  console.log(
+    `     \x1b[2m（注意：seed 会清空现有错题与学生，本脚本不会自动执行它）\x1b[0m`,
+  )
 }
 
 async function main() {
@@ -385,6 +379,12 @@ async function main() {
   check(
     '保存后 customized 变成 true',
     put1.json?.customized === true,
+  )
+  check(
+    '只提交一个角色时，其他角色的权限不受影响',
+    (put1.json?.matrix?.['export:run'] ?? []).includes('parent') &&
+      (put1.json?.matrix?.['questions:read'] ?? []).includes('student'),
+    `export:run=${JSON.stringify(put1.json?.matrix?.['export:run'])}`,
   )
 
   const badPerm = await send('PUT', '/api/auth/permissions', {

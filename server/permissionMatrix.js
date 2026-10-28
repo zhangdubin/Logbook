@@ -261,8 +261,14 @@ export function saveMatrix(input) {
   }
 
   // 全列表 → 相对默认值的差集
+  //
+  // ⚠️ 只有**请求里明确提到**的角色才动它。
+  // 之前写成「没提到的角色当成空列表」，结果保存 { teacher: [...] } 时
+  // 会把 parent / student 的权限**全部清空** —— 一个只改一个角色的请求
+  // 毁掉了另外两个角色的权限。漏掉一个角色不该等于「收回它全部权限」。
   const overrides = {}
   for (const role of EDITABLE_ROLES) {
+    if (!Object.prototype.hasOwnProperty.call(input, role)) continue
     const next = new Set(Array.isArray(input[role]) ? input[role] : [])
     const base = new Set(
       PERMISSION_LIST.filter((p) => (DEFAULT_PERMISSIONS[p] ?? []).includes(role)),
@@ -271,6 +277,13 @@ export function saveMatrix(input) {
     const revoked = [...base].filter((p) => !next.has(p))
     if (granted.length === 0 && revoked.length === 0) continue
     overrides[role] = { granted, revoked }
+  }
+
+  // 没提到的角色：保留它现有的差集，不要动
+  const current = readOverrides()
+  for (const [role, value] of Object.entries(current)) {
+    if (Object.prototype.hasOwnProperty.call(overrides, role)) continue
+    overrides[role] = value
   }
 
   writeOverrides(overrides)

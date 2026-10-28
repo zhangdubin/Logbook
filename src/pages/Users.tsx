@@ -5,14 +5,14 @@
  *   - 账号列表（PC 表格 / 手机卡片）
  *   - 新建 / 编辑 / 停用启用 / 重置密码 / 删除
  *   - 关联学生（家长→多孩子、教师→多学生、学生→本人）
- *   - 底部权限矩阵预览（权限点 × 角色）
+ *   - 底部权限矩阵配置（权限点 × 角色，可直接勾选保存，立即生效）
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertBox, Card, EmptyState, Modal, Skeleton, StatTile } from '@/components/ui'
 import api, { ApiRequestError } from '@/lib/api'
 import { ROLES, ROLE_LABEL } from '@/lib/types'
-import type { PermissionMatrix, Student, User, UserInput } from '@/lib/types'
+import type { Student, User, UserInput } from '@/lib/types'
 import { useAuth } from '@/store/auth'
 import { useToast } from '@/store/toast'
 import { ROLE_COLOR } from '@/features/auth/roleMeta'
@@ -28,13 +28,10 @@ export default function Users() {
 
   const [users, setUsers] = useState<User[]>([])
   const [students, setStudents] = useState<Student[]>([])
-  const [matrix, setMatrix] = useState<PermissionMatrix | null>(null)
 
   const [usersLoading, setUsersLoading] = useState(true)
   const [studentsLoading, setStudentsLoading] = useState(true)
-  const [matrixLoading, setMatrixLoading] = useState(false)
   const [usersError, setUsersError] = useState<string | null>(null)
-  const [matrixError, setMatrixError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
 
   /* 新建 / 编辑 */
@@ -88,25 +85,11 @@ export default function Users() {
     }
   }, [])
 
-  const loadMatrix = useCallback(async () => {
-    setMatrixLoading(true)
-    setMatrixError(null)
-    try {
-      const m = await api.permissionMatrix()
-      setMatrix(m)
-    } catch (e) {
-      setMatrixError(errorText(e, '权限矩阵加载失败'))
-    } finally {
-      setMatrixLoading(false)
-    }
-  }, [])
-
   useEffect(() => {
     if (!allowed) return
     void loadUsers()
     void loadStudents()
-    void loadMatrix()
-  }, [allowed, loadUsers, loadStudents, loadMatrix])
+  }, [allowed, loadUsers, loadStudents])
 
   /* ------------------------------ 统计 ------------------------------ */
 
@@ -239,14 +222,18 @@ export default function Users() {
 
   if (!allowed) {
     return (
-      <div className="card p-5">
-        <AlertBox tone="warning" title="当前角色无权查看此内容">
-          <p>
-            「账号管理」仅对系统管理员开放。当前角色为
-            {currentUser ? ROLE_LABEL[currentUser.role] : '未登录用户'}，
-            如需开通请联系系统管理员。
-          </p>
-        </AlertBox>
+      <div className="space-y-4 pb-6">
+        <div className="card p-5">
+          <AlertBox tone="warning" title="当前角色无权查看此内容">
+            <p>
+              「账号管理」仅对系统管理员开放。当前角色为
+              {currentUser ? ROLE_LABEL[currentUser.role] : '未登录用户'}，
+              如需开通请联系系统管理员。
+            </p>
+          </AlertBox>
+        </div>
+        {/* 权限矩阵对所有登录用户透明可见，但没有 users:manage 只能只读 */}
+        <PermissionMatrixTable />
       </div>
     )
   }
@@ -336,12 +323,7 @@ export default function Users() {
       </Card>
 
       {/* ---------------- 权限矩阵 ---------------- */}
-      <PermissionMatrixTable
-        matrix={matrix}
-        loading={matrixLoading}
-        error={matrixError}
-        onRetry={() => void loadMatrix()}
-      />
+      <PermissionMatrixTable />
 
       {/* ---------------- 弹窗 ---------------- */}
       <UserForm

@@ -5,7 +5,8 @@
  *   1. 口令哈希与校验（node:crypto scrypt，无第三方依赖）
  *   2. 会话（数据库表 + HttpOnly Cookie），支持滑动续期
  *   3. 登录失败限流（内存 Map，15 分钟 5 次）
- *   4. PERMISSIONS —— 权限矩阵（能做什么）
+ *   4. 权限矩阵（能做什么）—— 默认矩阵与生效逻辑在 server/permissionMatrix.js，
+ *      管理员可以在「账号管理 → 权限矩阵」里配置，保存后立即生效
  *   5. scopeStudentIds —— 数据范围（能对谁做）
  *
  * 核心原则：权限 = 权限点（permission）+ 数据范围（data scoping），
