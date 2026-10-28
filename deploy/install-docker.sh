@@ -172,6 +172,14 @@ done
 # 没有顶层目录时，说明文件直接铺在根上
 [ -n "$SRC_DIR" ] || SRC_DIR="$EXTRACT_DIR"
 
+# 提交号：源码 tarball 的顶层目录名带短 sha（owner-repo-<sha>），
+# GitHub API 打的包是 zhangdubin-Logbook-<sha>。记下来，
+# 装完 /api/version 里就能显示 commit，而不只是版本号。
+# 部署包里另外还带一份 server/build-info.json，下面构建时会优先用它。
+if [ -z "$COMMIT" ]; then
+  COMMIT="$(basename "$SRC_DIR" | grep -oE '[0-9a-f]{7,40}$' | head -n 1 || true)"
+fi
+
 # 校验包里确实有我们要的东西 —— 下到半截文件或下错包时立刻就能发现，
 # 而不是等到 docker build 报一堆看不懂的错。
 [ -f "$SRC_DIR/Dockerfile" ] \
@@ -302,20 +310,26 @@ wait_port_free() {
 
 # 谁在宿主机上占着这个端口？（不是 Docker 容器时用得上）
 # 依次试 ss / lsof / netstat —— NAS 上不一定三种都有。
+#
+# 注意：这几个管道「查不到」是**正常结果**（端口没人占、或者这台机器没装 ss），
+# 但脚本顶上开了 `set -euo pipefail`，grep 没匹配到会返回 1，整条管道就算失败 ——
+# 赋值语句跟着返回 1，set -e 会把脚本直接干掉。
+# 所以每一处都补 `|| true`：查不到就是查不到，不该让安装失败。
 port_holder_process() {
   local pids="" p
   if command -v ss >/dev/null 2>&1; then
-    pids="$(ss -ltnp 2>/dev/null | grep -E "[:.]${PORT}[[:space:]]" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)"
+    pids="$(ss -ltnp 2>/dev/null | grep -E "[:.]${PORT}[[:space:]]" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)"
   fi
   if [ -z "$pids" ] && command -v lsof >/dev/null 2>&1; then
-    pids="$(lsof -nP -t -iTCP:${PORT} -sTCP:LISTEN 2>/dev/null | sort -u)"
+    pids="$(lsof -nP -t -iTCP:${PORT} -sTCP:LISTEN 2>/dev/null | sort -u || true)"
   fi
   if [ -z "$pids" ] && command -v netstat >/dev/null 2>&1; then
-    pids="$(netstat -ltnp 2>/dev/null | grep -E "[:.]${PORT}" | grep -oE '[0-9]+/' | cut -d/ -f1 | sort -u)"
+    pids="$(netstat -ltnp 2>/dev/null | grep -E "[:.]${PORT}" | grep -oE '[0-9]+/' | cut -d/ -f1 | sort -u || true)"
   fi
   for p in $pids; do
-    ps -p "$p" -o pid=,args= 2>/dev/null | head -1
+    ps -p "$p" -o pid=,args= 2>/dev/null | head -1 || true
   done
+  return 0
 }
 
 # ---------------------------- 4. 生成 .env ----------------------------------
@@ -368,7 +382,14 @@ ok "已写入 docker-compose.override.yml"
 # ---- 端口预检（早于构建，纯提醒） -------------------------------------------
 # 只提醒，不中断：属于本项目的旧容器，脚本在启动阶段会自动清理并重试。
 # 真正拦住不放的是「别的项目」占了端口 —— 那时候再报错。
-COMPOSE_PROJECT_EARLY="$(grep -m1 '^name:' docker-compose.yml 2>/dev/null | sed 's/^name:[[:space:]]*//' | tr -d '"'"'"' \r')"
+# 注意：这里必须用**绝对路径** $INSTALL_DIR/docker-compose.yml。
+# 之前写的是相对路径 docker-compose.yml，而此时脚本还没 cd 到安装目录 ——
+# 用户一般是在自己的家目录 / volume1/docker/logbook 下跑的，那儿没有这个文件。
+# 配合脚本顶上的 `set -euo pipefail`，grep 找不到文件会返回 1 → 管道整体失败 →
+# 整条赋值语句返回 1 → set -e 直接把脚本干掉。
+# 结果就是：用户按文档里的 `curl ... | sudo bash` 一键安装，装到一半就静默退出。
+# `|| true` 是第二道保险：就算路径再变，端口预检也只该是「提醒」，不该让安装失败。
+COMPOSE_PROJECT_EARLY="$(grep -m1 '^name:' "$INSTALL_DIR/docker-compose.yml" 2>/dev/null | sed 's/^name:[[:space:]]*//' | tr -d '"'"'"' \r' || true)"
 COMPOSE_PROJECT_EARLY="${COMPOSE_PROJECT_EARLY:-cuoti-analytics}"
 EARLY_HOLDERS="$(port_holders)"
 if [ -n "$EARLY_HOLDERS" ]; then
@@ -392,6 +413,15 @@ step "构建镜像 cuoti-analytics:${IMAGE_TAG}"
 info "第一次构建要下载 node 基础镜像，大约 2~5 分钟"
 
 BUILD_ARGS=(--build-arg "VERSION=${VERSION}")
+# 提交号：命令行没给就从发布包里带的 server/build-info.json 里读。
+# 部署包里已经有这个文件（打包时写进去的），Dockerfile 会用 COMMIT 参数
+# 重新生成一份 —— 不传的话装完 /api/version 的 commit 是 null，
+# 前端就只显示版本号，看不出装的是哪个提交。
+if [ -z "$COMMIT" ] && [ -f "$INSTALL_DIR/server/build-info.json" ]; then
+  COMMIT="$(sed -n 's/.*"commit"[[:space:]]*:[[:space:]]*"\([0-9a-fA-F]\{7,40\}\)".*/\1/p' \
+    "$INSTALL_DIR/server/build-info.json" | head -n 1)"
+  [ -n "$COMMIT" ] && info "提交号：$COMMIT"
+fi
 [ -n "$COMMIT" ] && BUILD_ARGS+=(--build-arg "COMMIT=${COMMIT}")
 
 cd "$INSTALL_DIR"
@@ -399,7 +429,7 @@ cd "$INSTALL_DIR"
 BUILD_LOG="$TMP_DIR/build.log"
 if ! docker build "${BUILD_ARGS[@]}" -t "cuoti-analytics:${IMAGE_TAG}" . > "$BUILD_LOG" 2>&1; then
   fail "镜像构建失败。真正的报错在下面几行：
-$(grep -iE 'error|failed|cannot|denied' "$BUILD_LOG" | tail -6 | sed 's/^/  /')
+$(grep -iE 'error|failed|cannot|denied' "$BUILD_LOG" | tail -6 | sed 's/^/  /' || true)
   常见原因：
     - 报 the --chmod option requires BuildKit → Docker 版本太老，请升级 Docker Engine
     - 报 dial unix ... connect: no such file → Docker 守护进程没在跑，systemctl start docker
@@ -412,7 +442,7 @@ if [ "$WITH_OCR" = "1" ]; then
   step "构建本地 OCR 侧车镜像"
   if ! docker build -f deploy/docker/ocr.Dockerfile -t "cuoti-analytics-ocr:${IMAGE_TAG}" . > "$TMP_DIR/ocr-build.log" 2>&1; then
     warn "OCR 侧车构建失败，主应用不受影响（拍照识别会退回默认引擎）"
-    grep -iE 'error|failed|cannot' "$TMP_DIR/ocr-build.log" | tail -4 | sed 's/^/    /'
+    grep -iE 'error|failed|cannot' "$TMP_DIR/ocr-build.log" | tail -4 | sed 's/^/    /' || true
   fi
   ok "OCR 侧车镜像构建完成"
 fi
@@ -421,7 +451,7 @@ fi
 if [ "$SKIP_COMPOSE" = "1" ]; then
   warn "已跳过启动（--skip-compose）"
 else
-  COMPOSE_PROJECT="$(grep -m1 '^name:' docker-compose.yml 2>/dev/null | sed 's/^name:[[:space:]]*//' | tr -d '"'"'"' \r')"
+  COMPOSE_PROJECT="$(grep -m1 '^name:' docker-compose.yml 2>/dev/null | sed 's/^name:[[:space:]]*//' | tr -d '"'"'"' \r' || true)"
   COMPOSE_PROJECT="${COMPOSE_PROJECT:-cuoti-analytics}"
 
   step "启动服务"
@@ -502,7 +532,7 @@ $(echo "$HOSTPROC" | sed 's/^/      /')
   完整日志：cd ${INSTALL_DIR} && $COMPOSE logs --tail=50"
     else
       fail "启动失败。真正的报错在下面几行：
-$(grep -iE 'error|failed|allocated|denied|cannot' "$START_LOG" | tail -6 | sed 's/^/  /')
+$(grep -iE 'error|failed|allocated|denied|cannot' "$START_LOG" | tail -6 | sed 's/^/  /' || true)
   完整日志：cd ${INSTALL_DIR} && $COMPOSE logs --tail=50"
     fi
   fi
