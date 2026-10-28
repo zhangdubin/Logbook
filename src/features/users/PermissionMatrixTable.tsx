@@ -211,15 +211,20 @@ export function PermissionMatrixTable() {
     return n
   }, [draft, savedPerms])
 
-  /** 该格子相对**默认值**是否有差异（用已保存的矩阵比 defaults） */
+  /** 该格子相对**默认值**是否有差异 */
   const differsFromDefault = useCallback(
     (perm: string, role: Role) => {
       if (!config) return false
-      const cur = config.matrix?.[perm]?.includes(role) ?? false
+      // 用**当前生效**的状态（草稿优先）去比默认值。
+      // 如果拿「已保存的」来比，用户刚勾/刚取消时表格里已经是新状态了、
+      // 标记却还没变，两者对不上；草稿优先能保证看到的和标出来的一致。
+      const cur = effective
+        ? (effective[role] ?? []).includes(perm)
+        : (config.matrix?.[perm]?.includes(role) ?? false)
       const def = config.defaults?.[perm]?.includes(role) ?? false
       return cur !== def
     },
-    [config],
+    [config, effective],
   )
 
   /* ------------------------------ 操作 ------------------------------ */
