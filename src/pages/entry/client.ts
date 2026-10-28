@@ -14,6 +14,7 @@ import api, { ApiRequestError } from '@/lib/api'
 import { mockApi } from '@/pages/__mock__'
 import type {
   AIAnalysis,
+  AISettings,
   KnowledgePointRef,
   Paged,
   PhotoAnalysisRequest,
@@ -25,6 +26,22 @@ import type {
 } from '@/lib/types'
 
 export type DataMode = 'live' | 'mock'
+
+/**
+ * 当前识别能力：配了视觉模型 / 只有本地 OCR / 都没配 / 拿不到配置。
+ * GET /api/settings/ai 登录即可读（不需要管理员权限）；
+ * 读不到就返回 'unknown'，前端用中性文案，不承诺 AI。
+ */
+export type EngineState = 'vision' | 'local' | 'none' | 'unknown'
+
+function engineStateFrom(settings: AISettings | undefined): EngineState {
+  if (!settings) return 'unknown'
+  const hasModel = settings.enableModel === true && settings.hasApiKey === true
+  const hasOcr = settings.ocrEnabled === true && !!settings.ocrBaseUrl
+  if (hasModel) return 'vision'
+  if (hasOcr) return 'local'
+  return 'none'
+}
 
 /**
  * - collection：列表类接口（404 说明路由还没实现，可降级）
@@ -131,6 +148,19 @@ export const dataClient = {
     withFallback(() => api.analyzePhoto(payload), () => mockApi.analyzePhoto(payload), 'mutation'),
   uploadPhoto: (file: File): Promise<{ url: string; id: string; dataUrl: string }> =>
     withFallback(() => api.uploadPhoto(file), () => mockApi.uploadPhoto(file), 'mutation'),
+
+  /* -------- 识别引擎状态 -------- */
+  /**
+   * 读取当前 AI / OCR 配置，判断这台机器到底能识别到什么程度。
+   * 任何失败都返回 'unknown'（中性文案），不会影响页面其它功能。
+   */
+  getEngineState: async (): Promise<EngineState> => {
+    try {
+      return engineStateFrom(await api.getAiSettings())
+    } catch {
+      return 'unknown'
+    }
+  },
 
   /* -------- 知识点 -------- */
   getKnowledgePoints: (subject?: string): Promise<KnowledgePointRef[]> =>

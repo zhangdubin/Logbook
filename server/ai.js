@@ -29,6 +29,8 @@ import {
   normalizeDraft,
   draftFromOcrLines,
   classifyOcrLines,
+  inferSubjectFromText,
+  inferQuestionTypeFromText,
   fieldConfidenceFromOcr,
   fuseConfidence,
 } from './vision.js'
@@ -1143,8 +1145,14 @@ export async function analyzePhoto(input = {}) {
   }
   const localAnalysis = localAnalyze(localBase)
 
+  // 提示词兜底时也用启发式判学科（用户没选才生效）
+  const hintSubjectInfer = input.subject
+    ? { subject: '', confidence: 0 }
+    : inferSubjectFromText(hint)
+  const hintSubject = hintSubjectInfer.confidence >= 0.5 ? hintSubjectInfer.subject : ''
+
   const localDraft = {
-    subject: localAnalysis.subject,
+    subject: hintSubject || localAnalysis.subject,
     questionType: localAnalysis.questionType,
     knowledgePoints: localAnalysis.knowledgePoints.map((k) => k.name),
     stem: hint || '（本地引擎未能识别图片文字，请补充题干文本）',
@@ -1154,6 +1162,12 @@ export async function analyzePhoto(input = {}) {
     difficulty: 3,
     confidence: 0.32,
     ocrText: hint || '',
+    ...(hintSubject
+      ? {
+          subjectConfidence: hintSubjectInfer.confidence,
+          subjectEvidence: hintSubjectInfer.evidence,
+        }
+      : {}),
   }
 
   /* ---------------- 1. 解码图片 ---------------- */
@@ -1251,8 +1265,10 @@ export async function analyzePhoto(input = {}) {
     if (norm.notes) warnings.push(`模型备注：${String(norm.notes).slice(0, 120)}`)
   } else if (ocr?.text) {
     // 只有本地 OCR 可用：直接用 OCR 文本构造草稿
+    // 契约：fallbackSubject 有值 == 用户**手动选过**学科 -> 优先于启发式判定
     const ocrDraft = draftFromOcrLines(ocr.lines ?? [], {
-      fallbackSubject: localAnalysis.subject,
+      fallbackSubject: input.subject,
+      localSubject: localAnalysis.subject,
       fallbackQuestionType: localAnalysis.questionType,
       fallbackKnowledgePoints: localAnalysis.knowledgePoints.map((k) => k.name),
     })
@@ -1352,6 +1368,30 @@ export async function analyzePhoto(input = {}) {
     }
   }
 
+  /* --- 启发式判定（零 AI）：OCR-only 路径直接给结论；模型路径作为交叉校验 --- */
+  const heuristicText = String(finalDraft.ocrText || finalDraft.stem || '')
+  let subjectConfidence = finalDraft.subjectConfidence
+  let subjectEvidence = finalDraft.subjectEvidence
+  let questionTypeConfidence = finalDraft.questionTypeConfidence
+  if (subjectConfidence === undefined && heuristicText) {
+    const hSubject = inferSubjectFromText(heuristicText)
+    const hType = inferQuestionTypeFromText(
+      heuristicText,
+      ocrGroups ? { options: ocrGroups.options } : {},
+    )
+    const agree = Boolean(hSubject.subject) && hSubject.subject === finalDraft.subject
+    subjectConfidence = agree ? hSubject.confidence : Math.min(0.5, hSubject.confidence || 0)
+    subjectEvidence = hSubject.evidence
+    questionTypeConfidence = hType.questionType === finalDraft.questionType
+      ? hType.confidence
+      : Math.min(0.5, hType.confidence)
+    if (!agree && hSubject.subject) {
+      warnings.push(
+        `模型判定学科「${finalDraft.subject}」与文字特征（可能是${hSubject.subject}）不完全一致，请确认`,
+      )
+    }
+  }
+
   const response = {
     draft: {
       subject: finalDraft.subject,
@@ -1365,6 +1405,10 @@ export async function analyzePhoto(input = {}) {
       confidence,
       ocrText: finalDraft.ocrText,
       fieldConfidence: fieldConfidence ?? undefined,
+      /* 新增：启发式判定的把握与依据（前端可显示「为什么是这个学科」） */
+      ...(subjectConfidence !== undefined ? { subjectConfidence } : {}),
+      ...(subjectEvidence !== undefined ? { subjectEvidence } : {}),
+      ...(questionTypeConfidence !== undefined ? { questionTypeConfidence } : {}),
     },
     analysis,
     pipeline: {

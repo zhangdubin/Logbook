@@ -28,8 +28,12 @@ export function stripDataUrl(dataUrl) {
 }
 
 /**
- * 从任意形状的响应里抽取 { texts, scores }。
- * @returns {{texts: string[], scores: number[]}|null}
+ * 从任意形状的响应里抽取 { texts, scores, boxes }。
+ *
+ * boxes 是可选的坐标信息（外接矩形 [x0,y0,x1,y1]），来自新版的
+ * `rec_boxes` / `text_lines`；旧服务没有这个字段时返回空数组。
+ *
+ * @returns {{texts: string[], scores: number[], boxes: number[][]}|null}
  */
 export function extractOcrPairs(node) {
   if (!node) return null
@@ -38,24 +42,29 @@ export function extractOcrPairs(node) {
     // [[box, [text, score]], ...] 或 [[text, score], ...]
     const texts = []
     const scores = []
+    const boxes = []
     for (const item of node) {
       if (typeof item === 'string') {
         texts.push(item)
         scores.push(0.9)
+        boxes.push(null)
         continue
       }
       if (Array.isArray(item)) {
         const last = item[item.length - 1]
+        const box = item.length >= 2 && Array.isArray(item[0]) ? item[0] : null
         if (Array.isArray(last) && last.length >= 2 && typeof last[0] === 'string') {
           texts.push(last[0])
           scores.push(Number(last[1]) || 0.9)
+          boxes.push(box)
         } else if (typeof last === 'string') {
           texts.push(last)
           scores.push(0.9)
+          boxes.push(box)
         }
       }
     }
-    if (texts.length) return { texts, scores }
+    if (texts.length) return { texts, scores, boxes }
     for (const item of node) {
       const found = extractOcrPairs(item)
       if (found) return found
@@ -65,12 +74,15 @@ export function extractOcrPairs(node) {
 
   if (typeof node !== 'object') return null
 
+  // 0) 坐标信息：text_lines（新版侧车，带 box/score/text）或 rec_boxes
+  const boxes = extractBoxes(node)
+
   // 1) PaddleOCR Serving v2: {rec_texts, rec_scores}
   if (Array.isArray(node.rec_texts)) {
     const scores = Array.isArray(node.rec_scores)
       ? node.rec_scores.map((s) => (Number.isFinite(Number(s)) ? Number(s) : 0.9))
       : node.rec_texts.map(() => 0.9)
-    return { texts: node.rec_texts.map((t) => String(t ?? '')), scores }
+    return { texts: node.rec_texts.map((t) => String(t ?? '')), scores, boxes }
   }
 
   // 2) {texts, scores}
@@ -78,13 +90,13 @@ export function extractOcrPairs(node) {
     const scores = Array.isArray(node.scores)
       ? node.scores.map((s) => (Number.isFinite(Number(s)) ? Number(s) : 0.9))
       : node.texts.map(() => 0.9)
-    return { texts: node.texts.map((t) => String(t ?? '')), scores }
+    return { texts: node.texts.map((t) => String(t ?? '')), scores, boxes }
   }
 
   // 3) {text, confidence}
   if (typeof node.text === 'string' && node.text) {
     const conf = Number(node.confidence ?? node.score ?? node.avg_score ?? 0.9)
-    return { texts: [node.text], scores: [Number.isFinite(conf) ? conf : 0.9] }
+    return { texts: [node.text], scores: [Number.isFinite(conf) ? conf : 0.9], boxes: [] }
   }
 
   // 4) 递归查找
@@ -99,6 +111,53 @@ export function extractOcrPairs(node) {
       const found = extractOcrPairs(value)
       if (found) return found
     }
+  }
+  return null
+}
+
+/**
+ * 从响应里抽取文字框坐标（外接矩形 [x0,y0,x1,y1]）。
+ * 兼容 `rec_boxes`（4点多边形或矩形）与 `text_lines[].box`。
+ */
+export function extractBoxes(node) {
+  if (!node || typeof node !== 'object') return []
+
+  // text_lines: [{text, score, box:[x0,y0,x1,y1], center:[cx,cy]}]
+  if (Array.isArray(node.text_lines)) {
+    const out = []
+    for (const line of node.text_lines) {
+      const rect = normalizeRect(line?.box)
+      if (rect) out.push(rect)
+    }
+    if (out.length) return out
+  }
+
+  // rec_boxes: [[ [x,y],[x,y],[x,y],[x,y] ], ...] 或 [[x0,y0,x1,y1], ...]
+  if (Array.isArray(node.rec_boxes)) {
+    const out = []
+    for (const box of node.rec_boxes) {
+      const rect = normalizeRect(box)
+      if (rect) out.push(rect)
+    }
+    if (out.length) return out
+  }
+
+  return []
+}
+
+/** 把多边形 / 矩形统一成 [x0,y0,x1,y1] */
+function normalizeRect(box) {
+  if (!Array.isArray(box) || !box.length) return null
+  // 已经是 [x0,y0,x1,y1]
+  if (box.length === 4 && box.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+    return [box[0], box[1], box[2], box[3]]
+  }
+  // 4 点多边形
+  if (box.length >= 4 && box.every((p) => Array.isArray(p) && p.length >= 2)) {
+    const xs = box.map((p) => Number(p[0])).filter(Number.isFinite)
+    const ys = box.map((p) => Number(p[1])).filter(Number.isFinite)
+    if (!xs.length || !ys.length) return null
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]
   }
   return null
 }
@@ -159,6 +218,7 @@ export async function runLocalOcr({ baseUrl, imageBase64, timeoutMs = 15000 } = 
     const lines = pairs.texts.map((t, i) => ({
       text: String(t ?? ''),
       score: Number.isFinite(Number(pairs.scores[i])) ? Number(pairs.scores[i]) : 0.9,
+      ...(pairs.boxes?.[i] ? { box: pairs.boxes[i] } : {}),
     }))
     const valid = lines.filter((l) => l.text)
     const scores = valid.map((l) => l.score)

@@ -16,7 +16,7 @@ import { Field } from '@/components/ui'
 import { KnowledgePointInput } from './KnowledgePointInput'
 import { confidenceTone, showOptions } from './formModel'
 import type { ConfMap, FieldKey, QuestionFormValue } from './formModel'
-import type { CSSProperties } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 
 const OPTION_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
 
@@ -100,6 +100,7 @@ export function QuestionForm({
   suggestions = [],
   knowledgeOptions = [],
   errors = {},
+  subjectNotice,
 }: {
   value: QuestionFormValue
   onChange: (patch: Partial<QuestionFormValue>) => void
@@ -109,6 +110,8 @@ export function QuestionForm({
   suggestions?: string[]
   knowledgeOptions?: string[]
   errors?: Record<string, string>
+  /** 学科下拉框下方的补充说明（例如「已自动判断为数学，依据：…」） */
+  subjectNotice?: ReactNode
 }) {
   const optionsVisible = showOptions(value.questionType) || value.options.length > 0
 
@@ -183,6 +186,7 @@ export function QuestionForm({
             </select>
             {!useFieldConf && <ConfidenceBadge value={confOf('subject')} />}
           </div>
+          {subjectNotice}
           {lowHint('subject')}
         </Field>
 

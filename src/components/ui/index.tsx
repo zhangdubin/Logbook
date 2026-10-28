@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { initials } from '@/lib/format'
 
 /* ------------------------------------------------------------------ Card */
@@ -232,7 +233,14 @@ export function Modal({
 
   if (!open) return null
   const width = size === 'sm' ? 'max-w-md' : size === 'lg' ? 'max-w-3xl' : 'max-w-xl'
-  return (
+  // 用 portal 挂到 body 上。
+  //
+  // 为什么必须挂出去：`backdrop-blur`（也就是 backdrop-filter）会让元素
+  // **成为 position:fixed 的包含块**。只要 Modal 渲染在某个带 backdrop-blur
+  // 的祖先里（卡片、侧边栏、顶栏都可能带），它的 `fixed inset-0` 就不再相对
+  // 视口，而是相对那个祖先 —— 弹窗会被「关」在某个盒子里，手机端经常整个跑到
+  // 屏幕外。挂到 body 上就没有这个问题了。
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
       <div
         className="absolute inset-0 bg-ink-900/40 backdrop-blur-[2px]"
@@ -259,7 +267,8 @@ export function Modal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

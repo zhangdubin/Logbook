@@ -12,6 +12,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { GRADES } from '@/lib/format'
 import type { Subject } from '@/lib/types'
+import { ERROR_TYPES, QUESTION_TYPES, SUBJECTS } from '@/lib/types'
+import type { Difficulty, ErrorType } from '@/lib/types'
 import { AlertBox, Card, Field, Spinner } from '@/components/ui'
 import { useToast } from '@/store/toast'
 import { QuestionForm } from './entry/QuestionForm'
@@ -80,6 +82,9 @@ export default function Manual() {
 
   const draftTimer = useRef<number | null>(null)
   const loadedRef = useRef(false)
+  // 「带文跳转」预填要用**独立的** ref：loadedRef 会被上面的草稿恢复分支
+  // 先一步置成 true，用它就会把预填挡掉。
+  const handoffAppliedRef = useRef(false)
 
   /* 知识点候选 */
   useEffect(() => {
@@ -141,6 +146,51 @@ export default function Manual() {
     }
     if (handoff?.grade) setGrade(handoff.grade)
   }, [handoff])
+
+  /* 从拍照页「带文跳转」过来的表单预填
+   *
+   * 拍照识别不准时，用户不该从头再打一遍 —— 拍照页会把已经识别到的内容
+   * 通过 query 参数带过来（数组用**重复参数**表示，不用逗号拼，
+   * 因为题干里本来就有逗号，一拼就切错了）。
+   */
+  useEffect(() => {
+    if (handoffAppliedRef.current) return
+    if (editId || copyFrom) return
+    const one = (k: string) => searchParams.get(k) ?? ''
+    const many = (k: string) => searchParams.getAll(k).filter(Boolean)
+    const stem = one('stem')
+    const subject = one('subject')
+    const hasAny =
+      stem ||
+      subject ||
+      one('questionType') ||
+      one('myAnswer') ||
+      one('correctAnswer') ||
+      many('options').length ||
+      many('knowledgePoints').length
+    if (!hasAny) return
+
+    const next: QuestionFormValue = { ...EMPTY_FORM }
+    if (stem) next.stem = stem
+    if (subject && SUBJECTS.includes(subject as Subject)) next.subject = subject as Subject
+    const qt = one('questionType')
+    if (qt && QUESTION_TYPES.includes(qt as never)) next.questionType = qt as never
+    if (one('myAnswer')) next.myAnswer = one('myAnswer')
+    if (one('correctAnswer')) next.correctAnswer = one('correctAnswer')
+    const et = one('errorType')
+    if (et && ERROR_TYPES.includes(et as ErrorType)) next.errorType = et as ErrorType
+    if (one('errorDetail')) next.errorDetail = one('errorDetail')
+    const diff = Number(one('difficulty'))
+    if (Number.isFinite(diff) && diff >= 1 && diff <= 5) next.difficulty = diff as Difficulty
+    const opts = many('options')
+    if (opts.length) next.options = opts
+    const kps = many('knowledgePoints')
+    if (kps.length) next.knowledgePoints = kps
+    setForm(next)
+    handoffAppliedRef.current = true
+    // 提示一下用户「已经帮你填好了」
+    push('已从拍照页带入识别到的内容，请核对后保存', 'info')
+  }, [searchParams, editId, copyFrom, push])
 
   /* 草稿自动保存（本机） */
   const persistDraft = useCallback((value: QuestionFormValue, g: string) => {

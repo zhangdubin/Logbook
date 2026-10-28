@@ -10,16 +10,30 @@ import { useNavigate } from 'react-router-dom'
 import { GRADES } from '@/lib/format'
 import { SUBJECTS } from '@/lib/types'
 import type { PhotoAnalysisResponse, Subject } from '@/lib/types'
-import { AlertBox, Badge, Card, Field, Progress, Skeleton, Spinner } from '@/components/ui'
+import { AlertBox, Card, Field, Skeleton, Spinner } from '@/components/ui'
 import { useToast } from '@/store/toast'
 import { PhotoDropzone } from './entry/PhotoDropzone'
+import type { PhotoDropzoneHandle } from './entry/PhotoDropzone'
 import { QuestionForm } from './entry/QuestionForm'
 import { AnalysisPanel } from './entry/AnalysisPanel'
+import {
+  CONF_GOOD,
+  CONF_MID,
+  FieldConfidenceNotice,
+  RecognitionQualityCard,
+  SubjectAutoNotice,
+  buildConfMap,
+  mergeFieldConfidence,
+  pctText,
+  readExtras,
+} from './entry/RecognitionQuality'
 import { ModeBanner } from './entry/ModeBanner'
 import { dataClient } from './entry/client'
 import { useStudents } from './entry/hooks'
 import { EMPTY_FORM, formToInput, validateForm } from './entry/formModel'
-import type { ConfMap, FieldKey, QuestionFormValue } from './entry/formModel'
+import { ENGINE_BUSY_NOTE, engineFailTips } from './entry/engine'
+import type { EngineState } from './entry/engine'
+import type { ConfMap, QuestionFormValue } from './entry/formModel'
 import type { PhotoItem } from './entry/image'
 
 type Phase = 'idle' | 'recognizing' | 'analyzing' | 'result' | 'failed'
@@ -27,255 +41,6 @@ type Phase = 'idle' | 'recognizing' | 'analyzing' | 'result' | 'failed'
 const PHASE_TEXT: Record<'recognizing' | 'analyzing', { title: string; desc: string }> = {
   recognizing: { title: '正在识别题目文字…', desc: '把卷子上的题干、选项抄写下来' },
   analyzing: { title: 'AI 正在分析错因与知识点…', desc: '判断这道题到底错在哪儿，并给出订正步骤' },
-}
-
-/* ------------------ 置信度分级与字段中文名 ------------------ */
-
-/** ≥ 0.85 认为可信；0.6 ~ 0.85 建议核对；< 0.6 视为不确定 */
-const CONF_GOOD = 0.85
-const CONF_MID = 0.6
-
-const FIELD_LABEL: Record<string, string> = {
-  subject: '学科',
-  questionType: '题型',
-  knowledgePoints: '知识点',
-  stem: '题干',
-  options: '选项',
-  myAnswer: '我的答案',
-  correctAnswer: '正确答案',
-  difficulty: '难度',
-  errorType: '错因类型',
-  errorDetail: '错因详述',
-  ocrText: 'OCR 原文',
-}
-
-function fieldLabel(key: string): string {
-  return FIELD_LABEL[key] ?? key
-}
-
-interface ConfLevel {
-  text: string
-  tone: 'green' | 'amber' | 'red'
-  color: string
-}
-
-function confLevel(value: number): ConfLevel {
-  if (value >= CONF_GOOD) return { text: '可信', tone: 'green', color: '#10b981' }
-  if (value >= CONF_MID) return { text: '建议核对', tone: 'amber', color: '#f59e0b' }
-  return { text: '不确定', tone: 'red', color: '#ef4444' }
-}
-
-function pctText(value: number): string {
-  return `${Math.round(Math.min(1, Math.max(0, value)) * 100)}%`
-}
-
-/** 把后端返回的逐字段置信度转成表单用的字段 -> 置信度映射 */
-function buildConfMap(
-  draft: PhotoAnalysisResponse['draft'],
-  diagnosisConfidence?: number,
-): ConfMap {
-  const fc = draft.fieldConfidence ?? {}
-  const overall = typeof draft.confidence === 'number' ? draft.confidence : 0
-  const pick = (key: FieldKey): number => {
-    const v = fc[key]
-    return typeof v === 'number' && Number.isFinite(v)
-      ? Math.min(1, Math.max(0, v))
-      : overall
-  }
-  const errorTypeConfidence =
-    typeof fc.errorType === 'number' && Number.isFinite(fc.errorType)
-      ? fc.errorType
-      : (diagnosisConfidence ?? overall)
-  return {
-    subject: pick('subject'),
-    questionType: pick('questionType'),
-    knowledgePoints: pick('knowledgePoints'),
-    stem: pick('stem'),
-    options: pick('options'),
-    myAnswer: pick('myAnswer'),
-    correctAnswer: pick('correctAnswer'),
-    difficulty: pick('difficulty'),
-    errorType: errorTypeConfidence,
-  }
-}
-
-/**
- * 逐字段置信度：后端给了就用；额外把「错因诊断」的把握程度补进 errorType，
- * 让表单里也能看到这一项的置信度。后端没给逐字段数据时返回 undefined，
- * 表单会自动退回旧的整体置信度展示方式。
- */
-function mergeFieldConfidence(result: PhotoAnalysisResponse): Record<string, number> | undefined {
-  const fc = result.draft.fieldConfidence
-  if (!fc) return undefined
-  const merged: Record<string, number> = { ...fc }
-  const diag = result.analysis.diagnosis?.confidence
-  if (merged.errorType === undefined && typeof diag === 'number' && Number.isFinite(diag)) {
-    merged.errorType = diag
-  }
-  return merged
-}
-
-/* ------------------ 识别质量卡片 ------------------ */
-
-function engineHint(engine: string): string {
-  switch (engine) {
-    case 'vision-model':
-      return '这次是视觉模型直接看图识别，题干、公式和作图一般比较完整。'
-    case 'local-ocr':
-      return '这次先用本地 OCR 提取文字，再由引擎结构化成题目，图片没有上传到云端。'
-    case 'hint-fallback':
-      return '这次没有可用的视觉模型，只按你填的提示词推导，识别结果请务必人工核对。'
-    default:
-      return '识别引擎已把识别过程拆解成下面几个信号，权重越高说明对结果影响越大。'
-  }
-}
-
-function RecognitionQualityCard({ result }: { result: PhotoAnalysisResponse }) {
-  const draft = result.draft
-  const pipeline = result.pipeline
-  const confidence = typeof draft.confidence === 'number' ? draft.confidence : 0
-  const level = confLevel(confidence)
-
-  return (
-    <Card title="识别质量" subtitle="这次识别走的是哪条链路、把握有多大">
-      <div className="space-y-4">
-        {/* 整体置信度 */}
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold text-ink-500">整体置信度</p>
-            <p className="mt-1 text-3xl font-black tracking-tight text-ink-900">
-              {pctText(confidence)}
-            </p>
-          </div>
-          <Badge tone={level.tone}>{level.text}</Badge>
-        </div>
-        <Progress value={confidence * 100} color={level.color} height={10} />
-        <p className="text-[11px] leading-relaxed text-ink-400">
-          {confidence >= CONF_GOOD
-            ? '整体识别质量不错，简单扫一眼就能保存。'
-            : confidence >= CONF_MID
-              ? '有些地方可能认错了，重点看看标了「建议核对」的字段。'
-              : '这次识别把握不大，建议逐字对照原图检查一遍再保存。'}
-        </p>
-
-        {/* 识别链路 */}
-        <div className="rounded-xl border border-ink-200 bg-ink-50/60 p-3">
-          <p className="text-xs font-bold text-ink-700">🔗 识别链路</p>
-          {pipeline ? (
-            <>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <Badge tone="blue">{pipeline.ocrEngineLabel}</Badge>
-                {pipeline.model && <Badge tone="violet">{pipeline.model}</Badge>}
-              </div>
-              <p className="mt-1.5 text-[11px] leading-relaxed text-ink-500">
-                {engineHint(pipeline.ocrEngine)}
-              </p>
-            </>
-          ) : (
-            <p className="mt-1.5 text-[11px] leading-relaxed text-ink-400">
-              后端还没有返回链路信息；识别引擎升级后，这里会显示具体用了视觉模型还是本地 OCR。
-            </p>
-          )}
-        </div>
-
-        {/* 置信度构成 */}
-        {pipeline?.signals && pipeline.signals.length > 0 && (
-          <div>
-            <p className="mb-2 text-xs font-bold text-ink-700">📊 置信度构成</p>
-            <div className="space-y-2.5">
-              {pipeline.signals.map((s, i) => {
-                const sLevel = confLevel(s.value)
-                return (
-                  <div key={`${s.name}-${i}`}>
-                    <div className="mb-1 flex items-center justify-between gap-2 text-[11px]">
-                      <span className="font-semibold text-ink-600">{s.name}</span>
-                      <span className="shrink-0 text-ink-400">
-                        {pctText(s.value)} · 权重 {Math.round(s.weight * 100)}%
-                      </span>
-                    </div>
-                    <Progress value={s.value * 100} color={sLevel.color} height={6} />
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* 需要注意 */}
-        {pipeline?.warnings && pipeline.warnings.length > 0 && (
-          <div>
-            <p className="mb-2 text-xs font-bold text-ink-700">⚠️ 需要注意</p>
-            <ul className="space-y-1.5">
-              {pipeline.warnings.map((w, i) => (
-                <li
-                  key={i}
-                  className="flex gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800"
-                >
-                  <span aria-hidden>⚠️</span>
-                  <span>{w}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
-    </Card>
-  )
-}
-
-/* ------------------ 逐字段置信度：可疑字段清单 ------------------ */
-
-function FieldConfidenceNotice({ result }: { result: PhotoAnalysisResponse }) {
-  const fc = result.draft.fieldConfidence
-
-  if (!fc || Object.keys(fc).length === 0) {
-    return (
-      <p className="rounded-xl bg-ink-50/80 px-3 py-2 text-[11px] leading-relaxed text-ink-500">
-        后端这次没有提供逐字段置信度，先按整体置信度 {pctText(result.draft.confidence)} 参考。
-      </p>
-    )
-  }
-
-  const items = Object.entries(fc)
-    .filter(([, v]) => typeof v === 'number' && Number.isFinite(v) && v < CONF_GOOD)
-    .sort((a, b) => a[1] - b[1])
-
-  if (items.length === 0) {
-    return (
-      <p className="rounded-xl bg-emerald-50/70 px-3 py-2 text-[11px] leading-relaxed text-emerald-700">
-        ✅ 所有字段的识别置信度都在 {pctText(CONF_GOOD)} 以上，快速扫一眼就能保存。
-      </p>
-    )
-  }
-
-  return (
-    <div className="rounded-xl border border-red-100 bg-red-50/60 p-3">
-      <p className="text-xs font-bold text-red-700">🔍 建议重点核对的字段</p>
-      <ul className="mt-2 space-y-1.5">
-        {items.map(([key, value]) => {
-          const level = confLevel(value)
-          const risky = value < CONF_MID
-          return (
-            <li
-              key={key}
-              className="flex flex-wrap items-center gap-2 rounded-lg bg-white/85 px-3 py-2"
-            >
-              <span
-                className="h-2 w-2 shrink-0 rounded-full"
-                style={{ background: level.color }}
-                aria-hidden
-              />
-              <span className="text-xs font-bold text-ink-800">{fieldLabel(key)}</span>
-              <Badge tone={level.tone}>{pctText(value)}</Badge>
-              <span className="text-[11px] text-ink-500">
-                {risky ? '此项识别不确定，请人工核对' : '这一项把握不大，建议核对一下'}
-              </span>
-            </li>
-          )
-        })}
-      </ul>
-    </div>
-  )
 }
 
 export default function Capture() {
@@ -286,6 +51,8 @@ export default function Capture() {
   const [photos, setPhotos] = useState<PhotoItem[]>([])
   const [grade, setGrade] = useState('')
   const [subject, setSubject] = useState<Subject | ''>('')
+  /** 用户是否手动改过学科（改过就不再被自动判定覆盖） */
+  const [subjectTouched, setSubjectTouched] = useState(false)
   const [hint, setHint] = useState('')
   const [phase, setPhase] = useState<Phase>('idle')
   const [result, setResult] = useState<PhotoAnalysisResponse | null>(null)
@@ -296,13 +63,32 @@ export default function Capture() {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [failMsg, setFailMsg] = useState<string | null>(null)
+  /** 当前识别能力：决定文案与失败建议 */
+  const [engine, setEngine] = useState<EngineState>('unknown')
+  /** 识别超过 8 秒还没结果 */
+  const [slow, setSlow] = useState(false)
 
   const phaseTimer = useRef<number | null>(null)
+  /** 慢识别提示计时器 */
+  const slowTimer = useRef<number | null>(null)
+  /** 照片采集区：需要「重新裁剪 / 换一张照片」时命令式调用 */
+  const dropzoneRef = useRef<PhotoDropzoneHandle>(null)
 
   /* 初始化年级（跟随当前学生） */
   useEffect(() => {
     if (currentStudent?.grade && GRADES.includes(currentStudent.grade)) setGrade(currentStudent.grade)
   }, [currentStudent])
+
+  /* 当前识别能力：配了视觉模型 / 只有本地 OCR / 都没配 */
+  useEffect(() => {
+    let alive = true
+    void dataClient.getEngineState().then((state) => {
+      if (alive) setEngine(state)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   /* 知识点候选（已有错题里的知识点） */
   useEffect(() => {
@@ -323,6 +109,7 @@ export default function Capture() {
   useEffect(
     () => () => {
       if (phaseTimer.current) window.clearTimeout(phaseTimer.current)
+      if (slowTimer.current) window.clearTimeout(slowTimer.current)
     },
     [],
   )
@@ -334,6 +121,8 @@ export default function Capture() {
   const applyResult = (res: PhotoAnalysisResponse) => {
     const d = res.draft
     const a = res.analysis
+    /* 用户没手动选过学科时，把后端自动判定的学科作为下拉框默认值 */
+    if (!subjectTouched && d.subject) setSubject(d.subject)
     setForm({
       subject: d.subject ?? '数学',
       questionType: d.questionType ?? '解答题',
@@ -355,8 +144,10 @@ export default function Capture() {
   }
 
   /* ------------------------------ AI 识别 ------------------------------ */
-  const runAnalyze = async () => {
-    if (!photos.length) {
+  /** imageOverride：裁剪完成后直接用新图重新识别（不用等 state 生效） */
+  const runAnalyze = async (imageOverride?: string) => {
+    const image = imageOverride ?? photos[0]?.dataUrl
+    if (!image) {
       push('先拍一张错题照片吧 📷', 'error')
       return
     }
@@ -365,25 +156,30 @@ export default function Capture() {
     setPhase('recognizing')
     setFailMsg(null)
     setResult(null)
+    setSlow(false)
 
     phaseTimer.current = window.setTimeout(() => {
       setPhase((p) => (p === 'recognizing' ? 'analyzing' : p))
     }, 1500)
+    /* 超过 8 秒还没结果，给一句「还在识别」和提速建议 */
+    slowTimer.current = window.setTimeout(() => setSlow(true), 8000)
 
     try {
       const res = await dataClient.analyzePhoto({
-        image: photos[0].dataUrl,
+        image,
         grade: grade || undefined,
         subject: subject || undefined,
         hint: hint.trim() || undefined,
       })
       if (phaseTimer.current) window.clearTimeout(phaseTimer.current)
+      if (slowTimer.current) window.clearTimeout(slowTimer.current)
       setResult(res)
       applyResult(res)
       setPhase('result')
       push('识别完成，核对一下就能保存 ✅', 'success')
     } catch (e) {
       if (phaseTimer.current) window.clearTimeout(phaseTimer.current)
+      if (slowTimer.current) window.clearTimeout(slowTimer.current)
       setFailMsg(e instanceof Error ? e.message : '识别失败')
       setPhase('failed')
     }
@@ -420,9 +216,63 @@ export default function Capture() {
     }
   }
 
+  /* ------------------------------ 识别不准时的三个出口 ------------------------------ */
+  /** 回到裁剪界面重新框选 */
+  const recrop = () => {
+    const first = photos[0]
+    if (!first) {
+      push('先拍一张错题照片吧 📷', 'error')
+      return
+    }
+    dropzoneRef.current?.cropPhoto(first.id)
+  }
+
+  /** 直接把光标送到题干，手动改内容 */
+  const editManually = () => {
+    const el = document.querySelector<HTMLTextAreaElement>(
+      'textarea[placeholder^="把题目文字"]',
+    )
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.focus({ preventScroll: true })
+    } else {
+      push('在右边表单里直接改就行', 'info')
+    }
+  }
+
+  /** 换一张照片重新拍 */
+  const pickAnother = () => {
+    dropzoneRef.current?.pickPhoto()
+  }
+
   /* ------------------------------ 兜底：手动补录 ------------------------------ */
+  /**
+   * 跳到手动补录页，并把**已经识别到的文字**一起带过去，
+   * 用户不用从头再打一遍。
+   * 文字走 query（字段名与表单一致，重复参数表示数组）：
+   *   stem / subject / questionType / myAnswer / correctAnswer /
+   *   errorType / errorDetail / difficulty
+   *   options（重复） / knowledgePoints（重复）
+   * 图片仍然走 location.state（体积大，不适合塞 URL）。
+   */
   const gotoManual = () => {
-    navigate('/manual', {
+    const params = new URLSearchParams()
+    const put = (key: string, value: string | number | undefined) => {
+      if (value === undefined || value === null || value === '') return
+      params.set(key, String(value))
+    }
+    put('stem', form.stem)
+    put('subject', form.subject)
+    put('questionType', form.questionType)
+    put('myAnswer', form.myAnswer)
+    put('correctAnswer', form.correctAnswer)
+    put('errorType', form.errorType)
+    put('errorDetail', form.errorDetail)
+    put('difficulty', form.difficulty)
+    form.options.forEach((o) => params.append('options', o))
+    form.knowledgePoints.forEach((k) => params.append('knowledgePoints', k))
+    const qs = params.toString()
+    navigate(`/manual${qs ? `?${qs}` : ''}`, {
       state: {
         images: photos.map((p) => p.dataUrl),
         subject: subject || undefined,
@@ -435,6 +285,7 @@ export default function Capture() {
   const reset = () => {
     setPhase('idle')
     setResult(null)
+    setSubjectTouched(false)
     setForm(EMPTY_FORM)
     setConf({})
     setSuggestions([])
@@ -456,6 +307,22 @@ export default function Capture() {
   /* 表单用的逐字段置信度（后端没给时为 undefined，表单自动退回旧展示） */
   const fieldConf = useMemo(() => (result ? mergeFieldConfidence(result) : undefined), [result])
 
+  /* 后端可选字段：学科自动判定 / 警告（没有就完全不显示） */
+  const extras = useMemo(() => readExtras(result), [result])
+
+  /* 学科下拉框下方的「已自动判断为 XX」提示 */
+  const subjectNotice = useMemo(
+    () =>
+      result ? (
+        <SubjectAutoNotice
+          subject={extras.inferSubject ?? result.draft.subject}
+          confidence={extras.subjectConfidence}
+          evidence={extras.subjectEvidence}
+        />
+      ) : null,
+    [result, extras],
+  )
+
   return (
     <div className="space-y-4 pb-6">
       <ModeBanner />
@@ -472,7 +339,23 @@ export default function Capture() {
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
           {/* ---------------- 左栏：采集 + 设置 ---------------- */}
           <div className="space-y-4">
-            <PhotoDropzone photos={photos} onChange={setPhotos} disabled={busy} />
+            <PhotoDropzone
+              ref={dropzoneRef}
+              photos={photos}
+              onChange={setPhotos}
+              onCropApplied={(p) => {
+                /* 已经识别过一次再裁剪 → 直接用新图重新识别；
+                   新拍的照片 → 只更新图片，等用户点「开始 AI 识别」再识别（不白烧接口） */
+                if (phase === 'result') {
+                  push('裁剪完成，正在用新图重新识别…', 'info')
+                  void runAnalyze(p.dataUrl)
+                } else {
+                  push('裁剪完成 ✅ 照片已更新', 'success')
+                }
+              }}
+              disabled={busy}
+              engine={engine}
+            />
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="年级" hint="选对年级，难度判断更准">
@@ -495,7 +378,10 @@ export default function Capture() {
                 <select
                   className="select"
                   value={subject}
-                  onChange={(e) => setSubject(e.target.value as Subject | '')}
+                  onChange={(e) => {
+                    setSubject(e.target.value as Subject | '')
+                    setSubjectTouched(true)
+                  }}
                   disabled={busy}
                 >
                   <option value="">自动判断</option>
@@ -524,6 +410,21 @@ export default function Capture() {
                   <Spinner /> {phaseInfo.title}
                 </p>
                 <p className="mt-1 text-xs text-brand-600/80">{phaseInfo.desc}</p>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-brand-600/70">
+                  {ENGINE_BUSY_NOTE[engine]}
+                </p>
+                {slow && (
+                  <p className="mt-2 rounded-lg bg-white/80 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
+                    还在识别，图片较大时可以先裁剪掉无关部分，会快很多。
+                    <button
+                      type="button"
+                      className="ml-1 font-bold underline"
+                      onClick={recrop}
+                    >
+                      去裁剪
+                    </button>
+                  </p>
+                )}
                 <div className="mt-3 space-y-2">
                   <Skeleton className="h-3 w-3/4" />
                   <Skeleton className="h-3 w-full" />
@@ -533,17 +434,36 @@ export default function Capture() {
             )}
 
             {phase === 'failed' && (
-              <AlertBox tone="error" title="自动识别失败，请手动补录">
+              <AlertBox tone="error" title="这次没能识别出来，看看下面这几招">
                 <p>{failMsg ?? '识别服务暂时不可用。'}</p>
-                <div className="mt-2 flex flex-wrap gap-2">
+                <ul className="mt-2 space-y-1 text-[11px] leading-relaxed opacity-90">
+                  {engineFailTips(engine, failMsg ?? '').map((tip, i) => (
+                    <li key={i}>· {tip}</li>
+                  ))}
+                </ul>
+                <div className="mt-2.5 flex flex-wrap gap-2">
                   <button type="button" className="btn btn-primary btn-sm" onClick={gotoManual}>
-                    ✍️ 去手动补录
+                    ✍️ 手动补录这道题
+                  </button>
+                  <button type="button" className="btn btn-outline btn-sm" onClick={recrop}>
+                    ✂️ 重新裁剪
                   </button>
                   <button type="button" className="btn btn-outline btn-sm" onClick={() => void runAnalyze()}>
                     🔁 再试一次
                   </button>
+                  {engine === 'none' && (
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={() => navigate('/system')}
+                    >
+                      ⚙️ 去配置识别引擎
+                    </button>
+                  )}
                 </div>
-                <p className="mt-2 text-[11px] opacity-80">照片已经保留，手动补录时会作为参考带过去。</p>
+                <p className="mt-2 text-[11px] opacity-80">
+                  照片已经保留；手动补录时会带着照片和已识别到的文字过去，不用重打一遍。
+                </p>
               </AlertBox>
             )}
 
@@ -561,8 +481,8 @@ export default function Capture() {
                   ↺ 重新识别
                 </button>
               )}
-              <button type="button" className="btn btn-ghost btn-lg" onClick={gotoManual} disabled={busy}>
-                ✍️ 手动补录
+              <button type="button" className="btn btn-outline btn-lg" onClick={gotoManual} disabled={busy}>
+                ✍️ 手动补录这道题
               </button>
             </div>
           </div>
@@ -578,8 +498,22 @@ export default function Capture() {
                   >
                     <p>
                       这次整体置信度只有 {pctText(result.draft.confidence)}，
-                      多半是字迹潦草、光线不足或者题目拍跨页了。
-                      逐字对照原图检查一遍，确认没错再保存，免得错题本里存错内容。
+                      多半是字迹潦草、光线不足，或者一��拍进去好几道题。
+                      下面三个办法都能救，选一个就行：
+                    </p>
+                    <div className="mt-2.5 flex flex-wrap gap-2">
+                      <button type="button" className="btn btn-primary btn-sm" onClick={recrop}>
+                        ✂️ 重新裁剪
+                      </button>
+                      <button type="button" className="btn btn-outline btn-sm" onClick={editManually}>
+                        ✍️ 手动修改
+                      </button>
+                      <button type="button" className="btn btn-outline btn-sm" onClick={pickAnother}>
+                        🖼️ 换一张照片
+                      </button>
+                    </div>
+                    <p className="mt-2 text-[11px] opacity-80">
+                      裁剪只留一道题通常最有效；实在看不清就手动改一下，存进去一样能用。
                     </p>
                   </AlertBox>
                 )}
@@ -590,9 +524,19 @@ export default function Capture() {
                   title="核对识别结果"
                   subtitle="AI 先填好一版，改完再保存更省事"
                   extra={
-                    <span className="tag bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
-                      整体置信度 {pctText(result.draft.confidence)}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="tag bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
+                        整体置信度 {pctText(result.draft.confidence)}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm"
+                        onClick={recrop}
+                        disabled={!photos.length}
+                      >
+                        ✂️ 重新裁剪
+                      </button>
+                    </div>
                   }
                 >
                   <div className="mb-4">
@@ -606,6 +550,7 @@ export default function Capture() {
                     suggestions={suggestions}
                     knowledgeOptions={knowledgeOptions}
                     errors={errors}
+                    subjectNotice={subjectNotice}
                   />
                   {result.draft.ocrText && (
                     <details className="mt-4 rounded-xl border border-ink-200 bg-ink-50/60 px-3 py-2">
@@ -626,6 +571,9 @@ export default function Capture() {
                     </button>
                     <button type="button" className="btn btn-outline" onClick={reset} disabled={saving}>
                       重新识别
+                    </button>
+                    <button type="button" className="btn btn-ghost" onClick={gotoManual} disabled={saving}>
+                      ✍️ 手动补录这道题
                     </button>
                   </div>
                 </Card>
