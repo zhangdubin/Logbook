@@ -83,12 +83,27 @@ docker info >/dev/null 2>&1 || fail "Docker 没在运行（systemctl start docke
 
 # 端口占用早提示（不中断，只提醒）。
 # 放在最前面，免得用户白等一趟 2~5 分钟的镜像构建，最后才发现端口被占。
-# 真正的拦截在启动前那一段。
-EARLY_OCCUPIED="$(docker ps --filter "publish=${PORT}" --format '{{.Names}}' 2>/dev/null || true)"
-if [ -n "$EARLY_OCCUPIED" ]; then
-  warn "端口 ${PORT} 当前有容器在用：$(echo "$EARLY_OCCUPIED" | tr '\n' ' ')"
-  echo "    如果这些不是本项目的旧容器，启动时会因为端口冲突失败。"
-  echo "    提前处理：docker ps --filter publish=${PORT}   然后 docker stop <名字> && docker rm <名字>"
+# 真正的处理在启动那一段（会自动清理本应用的旧容器并重试）。
+#
+# 这里用**项目标签**判断「是不是本应用的」：名字像不算，
+# 因为 compose 只认项目标签 —— 标签不一样 compose 就不会接管那个容器。
+EARLY_PROJECT_EARLY="${EARLY_PROJECT_EARLY:-cuoti-analytics}"
+EARLY_HOLDERS_EARLY="$(docker ps --filter "publish=${PORT}" \
+  --format '{{.Names}}|{{.Image}}|{{.Label "com.docker.compose.project"}}' 2>/dev/null || true)"
+if [ -n "$EARLY_HOLDERS_EARLY" ]; then
+  warn "端口 ${PORT} 当前已被占用："
+  echo "$EARLY_HOLDERS_EARLY" | while IFS= read -r l; do
+    [ -z "$l" ] && continue
+    n="$(echo "$l" | cut -d'|' -f1)"; i="$(echo "$l" | cut -d'|' -f2)"; p="$(echo "$l" | cut -d'|' -f3)"
+    echo "      ${n}  (镜像 ${i}, compose 项目 ${p:-无})"
+  done
+  if [ -n "$EARLY_HOLDERS_EARLY" ] && echo "$EARLY_HOLDERS_EARLY" | grep -q "|${EARLY_PROJECT_EARLY}$"; then
+    info "属于本项目的容器，compose 会自动替换，不影响安装。"
+  else
+    info "如果这些是**别的项目**的容器，启动时会报 port is already allocated。"
+    info "提前处理：docker ps --filter publish=${PORT} 然后 docker stop <名字> && docker rm <名字>"
+    info "或者换端口：--port $((PORT + 1))"
+  fi
   echo
 fi
 
@@ -196,6 +211,113 @@ ok "已安装到 ${INSTALL_DIR}"
 # 统一 touch 一遍，强制 BuildKit 重新读取文件内容。
 find "$INSTALL_DIR" -exec touch {} + 2>/dev/null || true
 
+# ---- 端口占用检查 ----------------------------------------------------------
+# 列出占用 ${PORT} 的容器：名字 / 镜像 / 所属 compose 项目
+#
+# ⚠️ 判断「是不是本项目自己的」要**看 compose 项目标签**，不能看名字。
+# 之前用「名字里含项目名就算自己的」来排除，结果踩坑了：
+# 旧容器名字恰好叫 cuoti-analytics、但它属于另一个 compose 项目
+# （当初装的时候目录/项目名不同），于是被误判成「自己的」而被跳过 ——
+# 结果 compose 起来时端口还是被占着，直接报 port is already allocated。
+# 名字像不代表是同一个项目，**标签才是**。
+port_holders() {
+  docker ps --filter "publish=${PORT}" \
+    --format '{{.Names}}|{{.Image}}|{{.Label "com.docker.compose.project"}}' 2>/dev/null || true
+}
+
+# 这个容器是不是 compose 会**自动替换**掉的？
+# 唯一的判据是 compose 项目标签：标签一样 → 同一个项目 → compose 接管它。
+#
+# ⚠️ 别拿镜像名/容器名来判断「是不是自己的」。踩过坑：
+# 旧容器镜像确实是 cuoti-analytics，但它属于**另一个** compose 项目
+# （当初装的时候项目名/目录不同），compose 根本不会去接管它 ——
+# 结果就是端口一直被占着，报 port is already allocated。
+is_ours() {
+  local project="$1" holder_project="$2"
+  [ -n "$holder_project" ] && [ "$holder_project" = "$project" ]
+}
+
+# 会挡住我们的容器（compose 管不着的）→ 必须先停掉/删掉
+port_conflict() {
+  local project="$1" out="" line name image hproject
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    name="${line%%|*}"; image="$(echo "$line" | cut -d'|' -f2)"; hproject="$(echo "$line" | cut -d'|' -f3)"
+    is_ours "$project" "$hproject" && continue
+    out="$out $name"
+  done <<EOF
+$(port_holders)
+EOF
+  echo "${out# }"
+}
+
+# 启动失败后，自动清掉占端口的**本应用旧容器**再重试一次。
+# 只删能确定是本应用的（镜像名是 cuoti-analytics / 容器名含 cuoti）。
+# 别人的容器我们绝不碰 —— 那种情况只提示，让用户自己决定。
+clear_ours_on_port() {
+  local project="$1" line name image hproject cleaned=""
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    name="${line%%|*}"; image="$(echo "$line" | cut -d'|' -f2)"; hproject="$(echo "$line" | cut -d'|' -f3)"
+    # 属于当前项目标签的容器，compose 自己会管，不要动
+    [ "$hproject" = "$project" ] && continue
+    # 只删「确定是本应用」的
+    case "$name" in *cuoti*) ;; *) case "$image" in *cuoti-analytics*) ;; *) continue ;; esac ;; esac
+    docker stop "$name" >/dev/null 2>&1 || true
+    docker rm "$name" >/dev/null 2>&1 || true
+    cleaned="$cleaned $name"
+  done <<EOF
+$(port_holders)
+EOF
+  echo "${cleaned# }"
+}
+
+compose_up() {
+  if [ "$WITH_OCR" = "1" ]; then
+    $COMPOSE --profile ocr -f docker-compose.yml -f docker-compose.override.yml up -d
+  else
+    $COMPOSE -f docker-compose.yml -f docker-compose.override.yml up -d
+  fi
+}
+
+# 端口上还有没有人听？有人 = 端口没空着。
+# 用 /dev/tcp 试连一下最可靠 —— NAS 上常常没有 ss/netstat。
+port_in_use() {
+  ( exec 3<>"/dev/tcp/127.0.0.1/${PORT}" ) 2>/dev/null && return 0
+  return 1
+}
+
+# 等端口空出来（最多 20 秒）。
+# 为什么需要等：compose 重建容器时是「先删旧的、再建新的」，但 docker-proxy
+# 进程释放端口有延迟，端口还没真正空出来就被新容器抢 → 报 port is already
+# allocated。这个错经常是「等一下就好」，不是真冲突。
+wait_port_free() {
+  local i
+  for i in $(seq 1 20); do
+    port_in_use || return 0
+    sleep 1
+  done
+  return 1
+}
+
+# 谁在宿主机上占着这个端口？（不是 Docker 容器时用得上）
+# 依次试 ss / lsof / netstat —— NAS 上不一定三种都有。
+port_holder_process() {
+  local pids="" p
+  if command -v ss >/dev/null 2>&1; then
+    pids="$(ss -ltnp 2>/dev/null | grep -E "[:.]${PORT}[[:space:]]" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)"
+  fi
+  if [ -z "$pids" ] && command -v lsof >/dev/null 2>&1; then
+    pids="$(lsof -nP -t -iTCP:${PORT} -sTCP:LISTEN 2>/dev/null | sort -u)"
+  fi
+  if [ -z "$pids" ] && command -v netstat >/dev/null 2>&1; then
+    pids="$(netstat -ltnp 2>/dev/null | grep -E "[:.]${PORT}" | grep -oE '[0-9]+/' | cut -d/ -f1 | sort -u)"
+  fi
+  for p in $pids; do
+    ps -p "$p" -o pid=,args= 2>/dev/null | head -1
+  done
+}
+
 # ---------------------------- 4. 生成 .env ----------------------------------
 step "生成环境配置"
 ENV_FILE="$INSTALL_DIR/.env"
@@ -243,6 +365,28 @@ services:
 EOF
 ok "已写入 docker-compose.override.yml"
 
+# ---- 端口预检（早于构建，纯提醒） -------------------------------------------
+# 只提醒，不中断：属于本项目的旧容器，脚本在启动阶段会自动清理并重试。
+# 真正拦住不放的是「别的项目」占了端口 —— 那时候再报错。
+COMPOSE_PROJECT_EARLY="$(grep -m1 '^name:' docker-compose.yml 2>/dev/null | sed 's/^name:[[:space:]]*//' | tr -d '"'"'"' \r')"
+COMPOSE_PROJECT_EARLY="${COMPOSE_PROJECT_EARLY:-cuoti-analytics}"
+EARLY_HOLDERS="$(port_holders)"
+if [ -n "$EARLY_HOLDERS" ]; then
+  warn "端口 ${PORT} 当前已被占用："
+  echo "$EARLY_HOLDERS" | while IFS= read -r l; do
+    [ -z "$l" ] && continue
+    n="$(echo "$l" | cut -d'|' -f1)"; i="$(echo "$l" | cut -d'|' -f2)"; p="$(echo "$l" | cut -d'|' -f3)"
+    echo "      ${n}  (镜像 ${i}, compose 项目 ${p:-无})"
+  done
+  if [ -n "$(port_conflict "$COMPOSE_PROJECT_EARLY")" ]; then
+    info "这些是**别的项目**的容器。如果不处理，启动时会报 port is already allocated。"
+    info "现在处理：docker ps --filter publish=${PORT} 然后 docker stop <名字> && docker rm <名字>"
+    info "或者换个端口：--port $((PORT + 1))"
+  else
+    info "属于本项目的旧容器，脚本启动时会自动替换掉，不影响。"
+  fi
+fi
+
 # ---------------------------- 6. 构建镜像 -----------------------------------
 step "构建镜像 cuoti-analytics:${IMAGE_TAG}"
 info "第一次构建要下载 node 基础镜像，大约 2~5 分钟"
@@ -273,63 +417,94 @@ if [ "$WITH_OCR" = "1" ]; then
   ok "OCR 侧车镜像构建完成"
 fi
 
-# ---- 端口占用检查 ----------------------------------------------------------
-# 返回值：占用 ${PORT} 且**不属于本项目**的容器名（空格分隔；没有则为空）
-#
-# 为什么要排除本项目自己的容器：升级时旧容器还占着端口，但 compose 会
-# 自动把它替换掉 —— 那不是冲突。要是把它当成冲突，升级就永远做不成。
-port_conflict() {
-  local project="$1"
-  local names out=""
-  names="$(docker ps --filter "publish=${PORT}" --format '{{.Names}}' 2>/dev/null || true)"
-  for n in $names; do
-    case "$n" in
-      *"$project"*) ;;          # 本项目自己的，compose 会自动替换
-      *) out="$out $n" ;;
-    esac
-  done
-  echo "${out# }"
-}
-
 # ---------------------------- 7. 启动 ----------------------------------------
 if [ "$SKIP_COMPOSE" = "1" ]; then
   warn "已跳过启动（--skip-compose）"
 else
-  # ---- 端口预检：端口被占着就别白跑一趟构建了 ------------------------------
   COMPOSE_PROJECT="$(grep -m1 '^name:' docker-compose.yml 2>/dev/null | sed 's/^name:[[:space:]]*//' | tr -d '"'"'"' \r')"
   COMPOSE_PROJECT="${COMPOSE_PROJECT:-cuoti-analytics}"
-  OCCUPIED_BY="$(port_conflict "$COMPOSE_PROJECT")"
-  if [ -n "$OCCUPIED_BY" ]; then
-    echo
-    warn "端口 ${PORT} 已经被别的容器占用了：${OCCUPIED_BY}"
-    echo "    这些容器还在用 ${PORT}，新服务会起不来。"
-    echo
-    echo "    两种做法，选一个："
-    echo
-    echo "    A) 停掉旧容器，然后用同样的端口起新版本（推荐）："
-    echo "         docker stop ${OCCUPIED_BY} && docker rm ${OCCUPIED_BY}"
-    echo "         cd ${INSTALL_DIR} && docker compose up -d"
-    echo
-    echo "    B) 换个端口，旧容器先留着："
-    echo "         sudo bash <(curl -fsSL https://raw.githubusercontent.com/${REPO}/main/deploy/install-docker.sh) --version ${VERSION} --port $((PORT + 1))"
-    echo
-    fail "端口冲突，已中止（上面的命令复制执行即可）"
-  fi
 
   step "启动服务"
   # 注意：不能用 `PROFILE_ARGS=()` 再 "${PROFILE_ARGS[@]}" ——
   # bash 4.3 及更早版本在 `set -u` 下展开空数组会报 unbound variable。
   START_LOG="$TMP_DIR/compose-up.log"
-  if [ "$WITH_OCR" = "1" ]; then
-    $COMPOSE --profile ocr -f docker-compose.yml -f docker-compose.override.yml up -d > "$START_LOG" 2>&1 \
-      || fail "启动失败。真正的报错在下面几行：
+
+  # ---- 启动（带重试）--------------------------------------------------------
+  # 端口冲突经常不是「真冲突」：旧容器删掉之后 docker-proxy 释放端口有延迟
+  # （NAS 上磁盘慢，可能要十几秒），端口还没真正空出来新容器就抢 → 报
+  # address already in use。所以这里不是「试一次就报错」，而是**重试几轮**：
+  #   每轮失败 → 清掉本应用的旧容器 → 等端口空出来 → 再试
+  STARTED=0
+  ATTEMPT=1
+  MAX_ATTEMPTS=4
+  while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+    if compose_up > "$START_LOG" 2>&1; then
+      STARTED=1
+      break
+    fi
+
+    if grep -qiE 'port is already allocated|address already in use' "$START_LOG"; then
+      if [ "$ATTEMPT" -eq 1 ]; then
+        HOLDERS="$(port_holders)"
+        if [ -n "$HOLDERS" ]; then
+          warn "端口 ${PORT} 被这些容器占着："
+          echo "$HOLDERS" | while IFS= read -r l; do
+            [ -z "$l" ] && continue
+            n="$(echo "$l" | cut -d'|' -f1)"; i="$(echo "$l" | cut -d'|' -f2)"; p="$(echo "$l" | cut -d'|' -f3)"
+            echo "      ${n}  (镜像 ${i}, compose 项目 ${p:-无})"
+          done
+        elif port_in_use; then
+          # 没有容器占着，但端口确实被占用 → 是**宿主机上的进程**占的。
+          # 这种情况下重试多少次都没用，直接说清楚，别让用户干等。
+          HOSTPROC="$(port_holder_process)"
+          fail "端口 ${PORT} 被**宿主机上的进程**占着（不是 Docker 容器），新容器抢不到这个端口。
+  占用者：
+$(echo "$HOSTPROC" | sed 's/^/      /')
+  先把它停掉，再重新运行安装脚本：
+    kill <上面的 PID>
+  或者换个端口：
+    sudo bash <(curl -fsSL https://raw.githubusercontent.com/${REPO}/main/deploy/install-docker.sh) --version ${VERSION} --port $((PORT + 1))
+  查是谁在占：ss -ltnp | grep ${PORT}    # 或 lsof -nP -iTCP:${PORT} -sTCP:LISTEN"
+        else
+          warn "端口 ${PORT} 被占着，但没查到占用它的容器（可能是 docker-proxy 还没退出）"
+        fi
+      fi
+
+      # 清掉「确定是本应用」但不属于当前 compose 项目的旧容器
+      CLEANED="$(clear_ours_on_port "$COMPOSE_PROJECT")"
+      if [ -n "$CLEANED" ]; then
+        info "已清理本应用的旧容器：${CLEANED}"
+      fi
+
+      info "等待端口 ${PORT} 释放（最多 20 秒）…"
+      wait_port_free || true
+      if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
+        info "第 ${ATTEMPT}/${MAX_ATTEMPTS} 次尝试失败，重试…"
+        sleep 3
+      fi
+    else
+      # 不是端口问题，别重试了，直接报真实错误
+      break
+    fi
+    ATTEMPT=$((ATTEMPT + 1))
+  done
+
+  if [ "$STARTED" -ne 1 ]; then
+    if grep -qiE 'port is already allocated|address already in use' "$START_LOG"; then
+      fail "端口 ${PORT} 被占用，重试 ${MAX_ATTEMPTS} 次仍然起不来。
+  先看是谁在占：
+    docker ps --filter publish=${PORT}
+    ss -ltnp | grep ${PORT}    # 没有 ss 就用 netstat -ltnp | grep ${PORT}
+  停掉占用者：
+    docker stop <容器名> && docker rm <容器名>
+  或者换个端口重装：
+    sudo bash <(curl -fsSL https://raw.githubusercontent.com/${REPO}/main/deploy/install-docker.sh) --version ${VERSION} --port $((PORT + 1))
+  完整日志：cd ${INSTALL_DIR} && $COMPOSE logs --tail=50"
+    else
+      fail "启动失败。真正的报错在下面几行：
 $(grep -iE 'error|failed|allocated|denied|cannot' "$START_LOG" | tail -6 | sed 's/^/  /')
   完整日志：cd ${INSTALL_DIR} && $COMPOSE logs --tail=50"
-  else
-    $COMPOSE -f docker-compose.yml -f docker-compose.override.yml up -d > "$START_LOG" 2>&1 \
-      || fail "启动失败。真正的报错在下面几行：
-$(grep -iE 'error|failed|allocated|denied|cannot' "$START_LOG" | tail -6 | sed 's/^/  /')
-  完整日志：cd ${INSTALL_DIR} && $COMPOSE logs --tail=50"
+    fi
   fi
   ok "容器已启动"
 fi
