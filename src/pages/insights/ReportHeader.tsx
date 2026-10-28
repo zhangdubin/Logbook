@@ -29,7 +29,7 @@ export function ReportHeader({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-base font-black tracking-tight text-ink-900">
-                AI 学情诊断报告
+                {report.byModel ? 'AI 学情诊断报告' : '学情诊断报告'}
               </h1>
               <Badge tone={report.byModel ? 'violet' : 'slate'}>
                 {report.byModel ? `模型：${report.model ?? '未知模型'}` : '本地启发式分析引擎'}

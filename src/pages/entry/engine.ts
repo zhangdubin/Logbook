@@ -46,6 +46,22 @@ export const ENGINE_BUSY_NOTE: Record<EngineState, string> = {
   unknown: '正在识别，通常需要几秒，请稍候。',
 }
 
+/** 主操作按钮的文案：按钮上不能写死「AI」 */
+export const ENGINE_ACTION: Record<EngineState, string> = {
+  vision: '✨ 开始 AI 识别',
+  local: '🔍 开始本地识别',
+  none: '🔍 尝试识别',
+  unknown: '🔍 开始识别',
+}
+
+/** 「重新识别」按钮 */
+export const ENGINE_RETRY: Record<EngineState, string> = {
+  vision: '↺ 重新识别',
+  local: '↺ 重新识别',
+  none: '↺ 再试一次',
+  unknown: '↺ 重新识别',
+}
+
 /** 识别失败时给的建议 */
 export function engineFailTips(engine: EngineState, message: string): string[] {
   const msg = message.toLowerCase()

@@ -31,7 +31,7 @@ import { ModeBanner } from './entry/ModeBanner'
 import { dataClient } from './entry/client'
 import { useStudents } from './entry/hooks'
 import { EMPTY_FORM, formToInput, validateForm } from './entry/formModel'
-import { ENGINE_BUSY_NOTE, engineFailTips } from './entry/engine'
+import { ENGINE_BUSY_NOTE, engineFailTips, ENGINE_ACTION, ENGINE_RETRY } from './entry/engine'
 import type { EngineState } from './entry/engine'
 import type { ConfMap, QuestionFormValue } from './entry/formModel'
 import type { PhotoItem } from './entry/image'
@@ -474,11 +474,11 @@ export default function Capture() {
                 onClick={() => void runAnalyze()}
                 disabled={busy || !photos.length}
               >
-                {busy ? '识别中…' : '✨ 开始 AI 识别'}
+                {busy ? '识别中…' : ENGINE_ACTION[engine]}
               </button>
               {phase === 'result' && (
                 <button type="button" className="btn btn-outline btn-lg" onClick={reset}>
-                  ↺ 重新识别
+                  {ENGINE_RETRY[engine]}
                 </button>
               )}
               <button type="button" className="btn btn-outline btn-lg" onClick={gotoManual} disabled={busy}>
@@ -583,11 +583,11 @@ export default function Capture() {
                 </Card>
               </>
             ) : (
-              <Card title="识别结果预览" subtitle="拍好照片后点击「开始 AI 识别」">
+              <Card title="识别结果预览" subtitle={`拍好照片后点击「${ENGINE_ACTION[engine].replace(/^[✨🔍]\s*/, '')}」`}>
                 <div className="space-y-3">
                   <div className="rounded-xl border border-dashed border-ink-200 px-4 py-10 text-center">
                     <div className="text-3xl">🧾</div>
-                    <p className="mt-2 text-sm font-bold text-ink-700">这里会显示 AI 识别出的题目</p>
+                    <p className="mt-2 text-sm font-bold text-ink-700">这里会显示识别出的题目</p>
                     <p className="mt-1 text-xs leading-relaxed text-ink-500">
                       识别后你可以逐项核对、修改，再保存到孩子的错题本。
                     </p>
