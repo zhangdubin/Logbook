@@ -25,42 +25,35 @@ import {
   ROLE_LINK_COLUMN,
   VALID_ROLES,
 } from './db.js'
+import {
+  effectivePermissionsForRole,
+  hasPermission as matrixHasPermission,
+} from './permissionMatrix.js'
 
 /* ========================================================================== */
 /* 权限矩阵 —— 「能做什么」                                                     */
 /* ========================================================================== */
+/**
+ * 默认矩阵与生效逻辑都搬到了 server/permissionMatrix.js：
+ * 管理员可以在「账号管理 → 权限矩阵」里配置，生效矩阵以数据库里的配置为准。
+ * 这里只做转发，避免两处各写一份规则。
+ */
+export {
+  DEFAULT_PERMISSIONS,
+  PERMISSION_LIST,
+  ROLES,
+  LOCKED_ROLES,
+  EDITABLE_ROLES,
+} from './permissionMatrix.js'
 
-export const PERMISSIONS = {
-  'students:read': ['admin', 'teacher', 'parent', 'student'],
-  'students:create': ['admin'],
-  'students:update': ['admin', 'teacher'],
-  'students:delete': ['admin'],
-  'questions:read': ['admin', 'teacher', 'parent', 'student'],
-  'questions:create': ['admin', 'teacher', 'parent', 'student'],
-  'questions:update': ['admin', 'teacher', 'parent', 'student'],
-  'questions:delete': ['admin', 'teacher', 'parent'],
-  'stats:read': ['admin', 'teacher', 'parent', 'student'],
-  'report:read': ['admin', 'teacher', 'parent'],
-  'export:run': ['admin', 'teacher', 'parent'],
-  'review:run': ['admin', 'teacher', 'parent', 'student'],
-  'settings:ai': ['admin'],
-  'settings:ocr': ['admin'],
-  'system:update': ['admin'],
-  'users:manage': ['admin'],
-}
-
-export const PERMISSION_LIST = Object.keys(PERMISSIONS)
-
-/** 角色是否拥有某权限点 */
+/** 角色是否拥有某权限点（按当前生效矩阵判定） */
 export function hasPermission(role, permission) {
-  const allowed = PERMISSIONS[permission]
-  if (!allowed) return false
-  return allowed.includes(role)
+  return matrixHasPermission(role, permission)
 }
 
-/** 某角色拥有的全部权限点 */
+/** 某角色当前拥有的全部权限点 */
 export function permissionsForRole(role) {
-  return PERMISSION_LIST.filter((p) => PERMISSIONS[p].includes(role))
+  return effectivePermissionsForRole(role)
 }
 
 /* ========================================================================== */

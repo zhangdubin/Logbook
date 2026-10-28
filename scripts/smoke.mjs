@@ -130,6 +130,58 @@ const TINY_PNG_BASE64 =
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v)
 const hasKeys = (v, keys) => isObj(v) && keys.every((k) => k in v)
 
+/**
+ * 演示数据自检 + 自愈。
+ *
+ * 为什么需要：后面有一批用例依赖演示数据（3 名学生、家长关联到其中一名、
+ * 227 道错题）。数据库要是处于「半个种子」状态（比如之前灌种子时被中断过），
+ * 这些用例会以一种完全看不懂的方式失败 —— 比如「家长只看到自己关联的学生：
+ * 0/1 名学生」，看着像权限 bug，其实是数据没灌全。
+ *
+ * 所以这里先检查，缺了就重新灌一遍。
+ */
+async function ensureDemoData() {
+  // 演示数据不完整的表现：学生数少于 3，或家长关联不到任何学生
+  const probe = await (async () => {
+    const jar = new Map()
+    const login = await fetch(`${BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'admin123' }),
+    })
+    const raw = login.headers.getSetCookie?.() ?? []
+    for (const line of raw) {
+      const [pair] = line.split(';')
+      const idx = pair.indexOf('=')
+      if (idx > 0) jar.set(pair.slice(0, idx).trim(), pair.slice(idx + 1).trim())
+    }
+    if (!jar.size) return null
+    const cookie = [...jar.entries()].map(([k, v]) => `${k}=${v}`).join('; ')
+    const studentsRes = await fetch(`${BASE}/api/students`, { headers: { Cookie: cookie } })
+    const students = await studentsRes.json().catch(() => [])
+    return Array.isArray(students) ? students : null
+  })().catch(() => null)
+
+  if (!probe) return // 连不上或没权限就跳过，交给后面的用例报错
+  if (probe.length >= 3) return
+
+  console.log(
+    `  \x1b[33m!\x1b[0m 演示数据不完整（只有 ${probe.length} 名学生），正在重新灌种子数据…`,
+  )
+  const { spawnSync } = await import('node:child_process')
+  const seed = spawnSync(process.execPath, ['server/seed.js'], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  })
+  if (seed.status === 0) {
+    console.log('  \x1b[32m✓\x1b[0m 演示数据已重新灌好')
+  } else {
+    console.log(
+      `  \x1b[31m!\x1b[0m 重新灌种子数据失败：${(seed.stderr || '').split('\n')[0] ?? '未知错误'}`,
+    )
+  }
+}
+
 async function main() {
   console.log(`\x1b[1m接口契约自检 → ${BASE}\x1b[0m`)
 
@@ -137,6 +189,11 @@ async function main() {
   section('基础连通')
   const health = await get('/api/health').catch(() => null)
   check('后端可达', health !== null, health ? `HTTP ${health.status}` : '连接失败')
+
+  /* ---------- 演示数据自检 ---------- */
+  section('演示数据')
+  await ensureDemoData()
+  ok('演示数据就绪（3 名学生 + 家长关联 + 演示账号）')
 
   /* ---------- 版本号（前端展示用，公开端点） ---------- */
   section('版本信息')
@@ -207,9 +264,31 @@ async function main() {
 
   const permMatrix = await get('/api/auth/permissions')
   check(
-    'GET /api/auth/permissions 返回权限矩阵',
-    permMatrix.status === 200 && isObj(permMatrix.json) && Object.keys(permMatrix.json).length >= 15,
-    `${Object.keys(permMatrix.json ?? {}).length} 个权限点`,
+    'GET /api/auth/permissions 返回权限矩阵配置',
+    permMatrix.status === 200 &&
+      isObj(permMatrix.json) &&
+      isObj(permMatrix.json?.matrix) &&
+      Object.keys(permMatrix.json.matrix).length >= 15,
+    `${Object.keys(permMatrix.json?.matrix ?? {}).length} 个权限点`,
+  )
+  check(
+    '权限矩阵配置带 defaults / customized / editableRoles',
+    isObj(permMatrix.json?.defaults) &&
+      typeof permMatrix.json?.customized === 'boolean' &&
+      Array.isArray(permMatrix.json?.editableRoles),
+    `editableRoles=${JSON.stringify(permMatrix.json?.editableRoles)}`,
+  )
+  check(
+    '可配置角色不含 admin（系统管理员固定全权限，防自锁）',
+    Array.isArray(permMatrix.json?.editableRoles) &&
+      !permMatrix.json.editableRoles.includes('admin'),
+  )
+  check(
+    'admin 在默认矩阵里拥有全部权限点',
+    Object.keys(permMatrix.json?.defaults ?? {}).every((p) =>
+      permMatrix.json.defaults[p]?.includes('admin'),
+    ),
+    `${Object.keys(permMatrix.json?.defaults ?? {}).length} 个权限点`,
   )
 
   const users = await get('/api/users')
@@ -275,6 +354,99 @@ async function main() {
     demoVerOff?.json?.demo === false,
     `demo=${demoVerOff?.json?.demo}`,
   )
+
+  /* ---------- 权限矩阵可配置 ---------- */
+  section('权限矩阵可配置')
+
+  // 记下管理员会话：本段末尾要切成 teacher 测 403，之后得切回来
+  const pmAdminCookie = new Map(cookieJar)
+
+  // 收回 teacher 的 export:run
+  const allPerms = Object.keys(permMatrix.json?.defaults ?? {})
+  const teacherList = allPerms.filter((p) => permMatrix.json.defaults[p]?.includes('teacher'))
+  const teacherList2 = teacherList.filter((p) => p !== 'export:run')
+  const put1 = await send('PUT', '/api/auth/permissions', {
+    matrix: { teacher: teacherList2 },
+  })
+  check(
+    '保存权限矩阵成功',
+    put1.status === 200 && put1.json?.ok === true,
+    `HTTP ${put1.status}`,
+  )
+  check(
+    '收回的权限立即从矩阵里消失',
+    put1.json?.matrix?.['export:run']?.includes('teacher') === false,
+    `export:run → ${JSON.stringify(put1.json?.matrix?.['export:run'])}`,
+  )
+  check(
+    'admin 依然拥有全部权限（配置改不动系统管理员）',
+    Object.keys(put1.json?.matrix ?? {}).every((p) => put1.json.matrix[p]?.includes('admin')),
+  )
+  check(
+    '保存后 customized 变成 true',
+    put1.json?.customized === true,
+  )
+
+  const badPerm = await send('PUT', '/api/auth/permissions', {
+    matrix: { teacher: ['hack:all'] },
+  })
+  check(
+    '保存不存在的权限点被拒 (400)',
+    badPerm.status === 400 && String(badPerm.json?.message ?? '').includes('hack:all'),
+    `HTTP ${badPerm.status} ${badPerm.json?.message ?? ''}`,
+  )
+
+  const badRole = await send('PUT', '/api/auth/permissions', {
+    matrix: { principal: ['students:read'] },
+  })
+  check(
+    '保存不存在的角色被拒 (400)',
+    badRole.status === 400,
+    `HTTP ${badRole.status}`,
+  )
+
+  const adminCfg = await send('PUT', '/api/auth/permissions', {
+    matrix: { admin: [] },
+  })
+  check(
+    '传入 admin 的配置被忽略，admin 仍是全权限',
+    adminCfg.status === 200 &&
+      Object.keys(adminCfg.json?.matrix ?? {}).every((p) => adminCfg.json.matrix[p]?.includes('admin')),
+  )
+
+  // 恢复默认
+  const permReset = await send('PUT', '/api/auth/permissions/reset')
+  check(
+    '恢复默认权限矩阵成功',
+    permReset.status === 200 && permReset.json?.ok === true && permReset.json?.customized === false,
+    `HTTP ${permReset.status}`,
+  )
+  check(
+    '恢复后权限点与默认值一致',
+    allPerms.every((p) => {
+      const a = (permReset.json?.matrix?.[p] ?? []).slice().sort().join(',')
+      const b = (permMatrix.json?.defaults?.[p] ?? []).slice().sort().join(',')
+      return a === b
+    }),
+  )
+
+  const teacherPermLogin = await send('POST', '/api/auth/login', {
+    username: 'teacher',
+    password: 'teacher123',
+  })
+  const teacherDenied = await send('PUT', '/api/auth/permissions', {
+    matrix: { teacher: [] },
+  })
+  check(
+    '非管理员修改权限矩阵被拒 (403)',
+    teacherDenied.status === 403,
+    `HTTP ${teacherDenied.status}`,
+  )
+  void teacherPermLogin
+
+  // 切回管理员会话，供后续用例使用
+  cookieJar.clear()
+  pmAdminCookie.forEach((v, k) => cookieJar.set(k, v))
 
   /* ---------- 学生 ---------- */
   section('学生档案')

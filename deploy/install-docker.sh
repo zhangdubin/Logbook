@@ -81,6 +81,17 @@ ok "compose 命令：${COMPOSE}"
 
 docker info >/dev/null 2>&1 || fail "Docker 没在运行（systemctl start docker），或者当前用户不在 docker 组里"
 
+# 端口占用早提示（不中断，只提醒）。
+# 放在最前面，免得用户白等一趟 2~5 分钟的镜像构建，最后才发现端口被占。
+# 真正的拦截在启动前那一段。
+EARLY_OCCUPIED="$(docker ps --filter "publish=${PORT}" --format '{{.Names}}' 2>/dev/null || true)"
+if [ -n "$EARLY_OCCUPIED" ]; then
+  warn "端口 ${PORT} 当前有容器在用：$(echo "$EARLY_OCCUPIED" | tr '\n' ' ')"
+  echo "    如果这些不是本项目的旧容器，启动时会因为端口冲突失败。"
+  echo "    提前处理：docker ps --filter publish=${PORT}   然后 docker stop <名字> && docker rm <名字>"
+  echo
+fi
+
 # ---------------------------- 1. 解析版本 -----------------------------------
 if [ "$VERSION" = "latest" ]; then
   step "查询最新版本"
@@ -262,19 +273,63 @@ if [ "$WITH_OCR" = "1" ]; then
   ok "OCR 侧车镜像构建完成"
 fi
 
+# ---- 端口占用检查 ----------------------------------------------------------
+# 返回值：占用 ${PORT} 且**不属于本项目**的容器名（空格分隔；没有则为空）
+#
+# 为什么要排除本项目自己的容器：升级时旧容器还占着端口，但 compose 会
+# 自动把它替换掉 —— 那不是冲突。要是把它当成冲突，升级就永远做不成。
+port_conflict() {
+  local project="$1"
+  local names out=""
+  names="$(docker ps --filter "publish=${PORT}" --format '{{.Names}}' 2>/dev/null || true)"
+  for n in $names; do
+    case "$n" in
+      *"$project"*) ;;          # 本项目自己的，compose 会自动替换
+      *) out="$out $n" ;;
+    esac
+  done
+  echo "${out# }"
+}
+
 # ---------------------------- 7. 启动 ----------------------------------------
 if [ "$SKIP_COMPOSE" = "1" ]; then
   warn "已跳过启动（--skip-compose）"
 else
+  # ---- 端口预检：端口被占着就别白跑一趟构建了 ------------------------------
+  COMPOSE_PROJECT="$(grep -m1 '^name:' docker-compose.yml 2>/dev/null | sed 's/^name:[[:space:]]*//' | tr -d '"'"'"' \r')"
+  COMPOSE_PROJECT="${COMPOSE_PROJECT:-cuoti-analytics}"
+  OCCUPIED_BY="$(port_conflict "$COMPOSE_PROJECT")"
+  if [ -n "$OCCUPIED_BY" ]; then
+    echo
+    warn "端口 ${PORT} 已经被别的容器占用了：${OCCUPIED_BY}"
+    echo "    这些容器还在用 ${PORT}，新服务会起不来。"
+    echo
+    echo "    两种做法，选一个："
+    echo
+    echo "    A) 停掉旧容器，然后用同样的端口起新版本（推荐）："
+    echo "         docker stop ${OCCUPIED_BY} && docker rm ${OCCUPIED_BY}"
+    echo "         cd ${INSTALL_DIR} && docker compose up -d"
+    echo
+    echo "    B) 换个端口，旧容器先留着："
+    echo "         sudo bash <(curl -fsSL https://raw.githubusercontent.com/${REPO}/main/deploy/install-docker.sh) --version ${VERSION} --port $((PORT + 1))"
+    echo
+    fail "端口冲突，已中止（上面的命令复制执行即可）"
+  fi
+
   step "启动服务"
   # 注意：不能用 `PROFILE_ARGS=()` 再 "${PROFILE_ARGS[@]}" ——
   # bash 4.3 及更早版本在 `set -u` 下展开空数组会报 unbound variable。
+  START_LOG="$TMP_DIR/compose-up.log"
   if [ "$WITH_OCR" = "1" ]; then
-    $COMPOSE --profile ocr -f docker-compose.yml -f docker-compose.override.yml up -d \
-      || fail "启动失败，执行 $COMPOSE logs 查看详细日志"
+    $COMPOSE --profile ocr -f docker-compose.yml -f docker-compose.override.yml up -d > "$START_LOG" 2>&1 \
+      || fail "启动失败。真正的报错在下面几行：
+$(grep -iE 'error|failed|allocated|denied|cannot' "$START_LOG" | tail -6 | sed 's/^/  /')
+  完整日志：cd ${INSTALL_DIR} && $COMPOSE logs --tail=50"
   else
-    $COMPOSE -f docker-compose.yml -f docker-compose.override.yml up -d \
-      || fail "启动失败，执行 $COMPOSE logs 查看详细日志"
+    $COMPOSE -f docker-compose.yml -f docker-compose.override.yml up -d > "$START_LOG" 2>&1 \
+      || fail "启动失败。真正的报错在下面几行：
+$(grep -iE 'error|failed|allocated|denied|cannot' "$START_LOG" | tail -6 | sed 's/^/  /')
+  完整日志：cd ${INSTALL_DIR} && $COMPOSE logs --tail=50"
   fi
   ok "容器已启动"
 fi

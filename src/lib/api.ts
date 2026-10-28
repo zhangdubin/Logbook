@@ -12,6 +12,8 @@ import type {
   LoginResult,
   Paged,
   PermissionMatrix,
+  PermissionMatrixConfig,
+  PermissionMatrixSaveResult,
   PhotoAnalysisRequest,
   PhotoAnalysisResponse,
   Question,
@@ -187,8 +189,24 @@ export const api = {
     request<LoginResult>('/auth/login', { method: 'POST', body: json(payload) }),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
   me: () => request<LoginResult>('/auth/me'),
-  /** 权限矩阵（权限点 → 允许角色） */
-  permissionMatrix: () => request<PermissionMatrix>('/auth/permissions'),
+  /**
+   * 权限矩阵配置（当前生效矩阵 + 默认矩阵 + 可配置角色）。
+   * 需要登录；返回里的 `defaults` 就是前端表格的行来源。
+   */
+  permissionMatrix: () => request<PermissionMatrixConfig>('/auth/permissions'),
+  /**
+   * 保存权限矩阵。
+   * @param matrix 角色 → 该角色最终拥有的权限点全列表（不含 admin）
+   * 需要 `users:manage` 权限，否则 403。
+   */
+  updatePermissionMatrix: (matrix: Record<string, string[]>) =>
+    request<PermissionMatrixSaveResult>('/auth/permissions', {
+      method: 'PUT',
+      body: json({ matrix }),
+    }),
+  /** 恢复后端内置的默认权限矩阵 */
+  resetPermissionMatrix: () =>
+    request<PermissionMatrixSaveResult>('/auth/permissions/reset', { method: 'PUT' }),
   /** 版本信息（公开端点，不需要登录；失败应静默忽略） */
   getVersion: () => request<AppVersion>('/version'),
   /** 自助改密：需提供旧密码，改密后作废该账号其它会话 */

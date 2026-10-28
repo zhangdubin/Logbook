@@ -526,6 +526,35 @@ export interface AuthState {
 /** 权限矩阵：权限点 → 允许的角色 */
 export type PermissionMatrix = Record<string, Role[]>
 
+/**
+ * 权限矩阵配置（`GET /api/auth/permissions` 的返回值）
+ *
+ * 后端内置一份默认矩阵（defaults），管理员在「账号管理 → 权限矩阵」里
+ * 改动后存的是**相对默认值的差集**，所以后端以后新增权限点时，
+ * 没有被显式关掉的权限会自动跟随默认值 —— 前端不需要关心这件事。
+ */
+export interface PermissionMatrixConfig {
+  /** 当前生效的矩阵：权限点 → 允许的角色 */
+  matrix: PermissionMatrix
+  /** 后端内置的默认矩阵：权限点 → 允许的角色 */
+  defaults: PermissionMatrix
+  /** 是否已被管理员改过（false = 完全用默认值） */
+  customized: boolean
+  /** 可配置的角色（不含 admin —— 系统管理员固定拥有全部权限） */
+  editableRoles: Role[]
+  /** 全部角色 */
+  roles: Role[]
+}
+
+/** 保存权限矩阵的返回值 */
+export interface PermissionMatrixSaveResult {
+  ok: true
+  /** 保存后当前生效的矩阵 */
+  matrix: PermissionMatrix
+  /** 是否已被改过 */
+  customized: boolean
+}
+
 /* ---------------- 系统设置与在线更新 ---------------- */
 
 /** 系统配置（仓库地址等非敏感项） */

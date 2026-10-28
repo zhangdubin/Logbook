@@ -12,7 +12,6 @@ import { Router } from 'express'
 
 import { db, nowISO } from '../db.js'
 import {
-  PERMISSIONS,
   SESSION_COOKIE,
   SESSION_TTL_MS,
   clearFailures,
@@ -26,9 +25,17 @@ import {
   readToken,
   recordFailure,
   requireAuth,
+  requirePermission,
   userResponse,
   verifyPassword,
 } from '../auth.js'
+import {
+  clearOverrides,
+  effectiveMatrix,
+  isCustomized,
+  matrixInfo,
+  saveMatrix,
+} from '../permissionMatrix.js'
 
 const router = Router()
 
@@ -103,8 +110,43 @@ router.get('/me', requireAuth, (req, res) => {
 })
 
 /* ---------------------------- 权限矩阵 ---------------------------- */
+/**
+ * GET /api/auth/permissions
+ *
+ * 返回当前生效的矩阵 + 内置默认矩阵 + 是否被改过 + 哪些角色可配置。
+ * 需要登录（但任何角色都能看 —— 这是权限的透明度）。
+ */
 router.get('/permissions', requireAuth, (_req, res) => {
-  res.json(PERMISSIONS)
+  res.json(matrixInfo())
+})
+
+/**
+ * PUT /api/auth/permissions
+ * body { matrix: { teacher: ['students:read', ...], parent: [...] } } → { ok, matrix, customized }
+ *
+ * 需要 `users:manage` 权限（默认只有系统管理员）。
+ * 两条硬约束：
+ *   - `admin` 固定拥有全部权限，传入的 admin 配置被忽略（防自锁）
+ *   - 权限点必须在后端白名单内，否则 400
+ */
+router.put('/permissions', requireAuth, requirePermission('users:manage'), (req, res) => {
+  const body = req.body ?? {}
+  // 兼容两种写法：{ matrix: {...} } 和直接 {...}
+  const input = body.matrix && typeof body.matrix === 'object' ? body.matrix : body
+  try {
+    res.json(saveMatrix(input))
+  } catch (e) {
+    res.status(400).json({ ok: false, message: e?.message || '权限矩阵保存失败' })
+  }
+})
+
+/**
+ * PUT /api/auth/permissions/reset → { ok, matrix, customized }
+ * 恢复成后端内置的默认权限矩阵。
+ */
+router.put('/permissions/reset', requireAuth, requirePermission('users:manage'), (_req, res) => {
+  clearOverrides()
+  res.json({ ok: true, matrix: effectiveMatrix(), customized: isCustomized() })
 })
 
 /* --------------------------- 自助修改口令 --------------------------- */
