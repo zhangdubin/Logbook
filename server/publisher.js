@@ -19,6 +19,11 @@ import { fileURLToPath } from 'node:url'
 import { createTarGz } from './tar.js'
 import { request, toBuffer } from './httpClient.js'
 
+/** 打一条日志（发布过程的可观测性） */
+function info(msg) {
+  console.log(`[publisher] ${msg}`)
+}
+
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const ROOT = path.resolve(HERE, '..')
 
@@ -263,34 +268,46 @@ export async function publishRelease({
     body: createBody,
   })
 
+  let release = null
+
   if (created.status === 422) {
     const msg = extractGitHubMessage(created.body)
-    throw new Error(
-      msg
-        ? `创建 Release 失败（标签 ${tag} 可能已存在）：${msg}`
-        : `创建 Release 失败：标签 ${tag} 已存在，请换一个版本号`,
-    )
-  }
-  if (created.status === 401) {
+    // Release 已经存在 → 不当失败，**改成往已有的 Release 上补传附件**。
+    //
+    // 为什么这么做：创建 Release 和上传附件是两步，中间任何一步失败（网络抖动、
+    // 大附件上传超时）都会留下一个「有 Release、没附件」的半成品。
+    // 用户再点一次「发布」却只会看到 already_exists，什么也修不了 ——
+    // 只能换个版本号重发。这对用户来说毫无意义。
+    // 所以这里去找回已有的 Release，接着传附件，让「发布」可以重跑。
+    const existing = await findReleaseByTag({ owner, repoName, tag, token, proxyUrl, apiBase })
+    if (existing?.id) {
+      release = existing
+      info(`Release ${tag} 已存在，往已有 Release 上补传附件`)
+    } else {
+      throw new Error(
+        msg
+          ? `创建 Release 失败（标签 ${tag} 可能已存在）：${msg}`
+          : `创建 Release 失败：标签 ${tag} 已存在，请换一个版本号`,
+      )
+    }
+  } else if (created.status === 401) {
     throw new Error('GitHub 令牌无效或已过期，请检查系统设置里的令牌')
-  }
-  if (created.status === 403) {
+  } else if (created.status === 403) {
     throw new Error('GitHub 拒绝访问：令牌缺少 contents:write 权限，或被限流')
-  }
-  if (created.status < 200 || created.status >= 300) {
+  } else if (created.status < 200 || created.status >= 300) {
     throw new Error(
       `创建 Release 失败：HTTP ${created.status} ${extractGitHubMessage(created.body) ?? ''}`.trim(),
     )
-  }
-
-  let release
-  try {
-    release = JSON.parse(created.body.toString('utf8'))
-  } catch {
-    throw new Error('创建 Release 失败：返回内容无法解析')
+  } else {
+    try {
+      release = JSON.parse(created.body.toString('utf8'))
+    } catch {
+      throw new Error('创建 Release 失败：返回内容无法解析')
+    }
   }
 
   // 3) 上传附件
+  // 附件已存在也当成功 —— 同一个附件重传一次是幂等的，不该让用户卡住
   const uploadUrl = `${uploadBase}/repos/${owner}/${repoName}/releases/${release.id}/assets?name=${encodeURIComponent(assetName)}`
   const uploaded = await request(uploadUrl, {
     method: 'POST',
@@ -308,9 +325,24 @@ export async function publishRelease({
   })
 
   if (uploaded.status === 422) {
-    throw new Error(
-      `附件上传失败：同名附件 ${assetName} 已存在（同一版本号不能重复发布）`,
-    )
+    // 同名附件已存在 = 之前已经传过了，这次直接当成功（幂等）。
+    // 之前这里是直接抛错，于是「有 Release、没附件」的半成品永远补不回来。
+    const assetName2 = assetName
+    info(`附件 ${assetName2} 已存在，跳过重复上传`)
+    return {
+      ok: true,
+      version,
+      tag,
+      releaseId: release.id,
+      releaseUrl: release.html_url ?? `https://github.com/${owner}/${repoName}/releases/tag/${tag}`,
+      assetName: assetName2,
+      assetId: null,
+      assetSize: null,
+      reused: true,
+      fileCount,
+      size,
+      commit: git?.sha ?? null,
+    }
   }
   if (uploaded.status === 401) {
     throw new Error('GitHub 令牌无效或已过期')
@@ -366,6 +398,45 @@ function extractGitHubMessage(buf) {
 /** 临时文件目录（发布用的附件落盘位置，可选） */
 export function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'cuoti-publish-'))
+}
+
+/**
+ * 按 tag 找回已存在的 Release。
+ *
+ * 用于「Release 已创建但附件没传上去」的补救：用户再点一次发布时，
+ * GitHub 会回 422 already_exists，这时不该报错，而是找到已有的 Release
+ * 继续把附件传上去 —— 让「发布」这个动作可以重跑。
+ *
+ * @returns {Promise<object|null>}
+ */
+export async function findReleaseByTag({
+  owner,
+  repoName,
+  tag,
+  token,
+  proxyUrl = '',
+  apiBase = 'https://api.github.com',
+} = {}) {
+  try {
+    const res = await request(
+      `${apiBase}/repos/${owner}/${repoName}/releases/tags/${encodeURIComponent(tag)}`,
+      {
+        method: 'GET',
+        proxyUrl,
+        timeoutMs: 30000,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'cuoti-analytics',
+        },
+      },
+    )
+    if (res.status < 200 || res.status >= 300) return null
+    return JSON.parse(res.body.toString('utf8'))
+  } catch {
+    return null
+  }
 }
 
 export { toBuffer }
