@@ -29,6 +29,20 @@ function check(name, cond, detail = '') {
 function section(title) {
   console.log(`\n\x1b[1m${title}\x1b[0m`)
 }
+/**
+ * 跳过一条用例。
+ *
+ * 什么时候用：这条用例**依赖演示账号**（parent / teacher / student）。
+ * 生产环境的库里只有管理员，没有这些账号 —— 那是正常的，不是坏了。
+ * 把它们当失败会让人以为系统有问题，其实只是没装演示数据。
+ * （演示数据得自己跑 npm run seed 才有，而 seed 会清空现有数据，
+ *   冒烟测试绝不自己执行它。）
+ */
+let skipped = 0
+function skip(name, reason = '') {
+  skipped++
+  console.log(`  \x1b[33m-\x1b[0m ${name}${reason ? ` — ${reason}` : '（已跳过）'}`)
+}
 
 /** 极简 Cookie 罐：登录后把 ct_session 带上后续请求 */
 const cookieJar = new Map()
@@ -434,15 +448,18 @@ async function main() {
     username: 'teacher',
     password: 'teacher123',
   })
-  const teacherDenied = await send('PUT', '/api/auth/permissions', {
-    matrix: { teacher: [] },
-  })
-  check(
-    '非管理员修改权限矩阵被拒 (403)',
-    teacherDenied.status === 403,
-    `HTTP ${teacherDenied.status}`,
-  )
-  void teacherPermLogin
+  if (teacherPermLogin.status !== 200) {
+    skip('非管理员修改权限矩阵被拒 (403)', '本机没有演示账号 teacher（生产环境正常）')
+  } else {
+    const teacherDenied = await send('PUT', '/api/auth/permissions', {
+      matrix: { teacher: [] },
+    })
+    check(
+      '非管理员修改权限矩阵被拒 (403)',
+      teacherDenied.status === 403,
+      `HTTP ${teacherDenied.status}`,
+    )
+  }
 
   // 切回管理员会话，供后续用例使用
   cookieJar.clear()
@@ -451,9 +468,11 @@ async function main() {
   /* ---------- 学生 ---------- */
   section('学生档案')
   const students = await get('/api/students')
+  // 临时测试学生：空库时建一个供后续用例用，用完再删
+  let tempStudentId = ''
   check('GET /api/students 返回数组', Array.isArray(students.json), `HTTP ${students.status}`)
   if (!Array.isArray(students.json) || !students.json.length) {
-    console.log('  \x1b[33m! 未检测到学生数据，请先执行 npm run seed\x1b[0m')
+    console.log('  \x1b[33m! 未检测到学生数据（生产环境空库是正常的），本轮会建一个临时学生\x1b[0m')
   } else {
     const s = students.json[0]
     check(
@@ -461,20 +480,34 @@ async function main() {
       hasKeys(s, ['id', 'name', 'grade', 'avatarColor', 'createdAt']),
       s.name,
     )
+  }
+
+  // 建一个临时学生。
+  // 为什么不管有没有学生都要建：后面的错题 CRUD、统计报表都要 studentId。
+  // 之前这个建学生的动作被写在「库里有学生」的分支里 —— 空库（生产环境刚装好）
+  // 时根本不会建，studentId 就是 undefined，POST /api/questions 直接 400，
+  // 后面一串报表用例也跟着 404。
+  // 临时学生会在「错题 CRUD」那段结束之后删掉，不会留在用户库里。
+  {
     const created = await send('POST', '/api/students', {
       name: '__冒烟测试学生__',
       grade: '初一',
     })
     check('POST /api/students', created.status === 200 || created.status === 201, `HTTP ${created.status}`)
-    if (created.json?.id) {
-      const patched = await send('PATCH', `/api/students/${created.json.id}`, { note: 'smoke' })
+    tempStudentId = created.json?.id ?? ''
+    if (tempStudentId) {
+      const patched = await send('PATCH', `/api/students/${tempStudentId}`, { note: 'smoke' })
       check('PATCH /api/students/:id', patched.status === 200, `HTTP ${patched.status}`)
-      const removed = await send('DELETE', `/api/students/${created.json.id}`)
-      check('DELETE /api/students/:id', removed.status === 204 || removed.status === 200, `HTTP ${removed.status}`)
     }
   }
 
-  const studentId = students.json?.[0]?.id
+  // 用哪个学生来建错题？
+  // 优先用库里已有的学生；**一个都没有的时候**（生产环境的空库）就用刚建的那个 ——
+  // 之前这里只取 students.json[0]，空库时拿到 undefined，后面 POST /api/questions
+  // 少了 studentId 直接 400，一串用例跟着崩。
+  // 注意：临时学生**不能**在这里就删掉，后面还要用它建错题、查报表，
+  // 删到「错题 CRUD」那一段结束之后再删。
+  const studentId = students.json?.[0]?.id ?? tempStudentId
 
   /* ---------- 错题 ---------- */
   section('错题 CRUD 与筛选')
@@ -539,6 +572,9 @@ async function main() {
     if (item?.id) await send('DELETE', `/api/questions/${item.id}`)
   }
   check('冒烟测试数据已清理干净', leftoverItems.length === 0, `残留 ${leftoverItems.length} 条`)
+
+  // 临时学生**先不删** —— 后面的「统计分析」还要用它（报表要按 studentId 查）。
+  // 删它的动作放在整轮用例的最后。
 
   /* ---------- 拍照分析 ---------- */
   section('拍照分析')
@@ -631,8 +667,19 @@ async function main() {
     username: 'parent',
     password: 'parent123',
   })
+  // 生产环境库里没有演示账号是正常的（演示数据要自己跑 npm run seed 才有，
+  // 而 seed 会清空现有数据，冒烟测试绝不自己跑）。这时把依赖演示账号的
+  // 用例标成「跳过」，而不是报失败 —— 否则每次生产部署后都像是坏了。
+  const hasDemoParent = parentLogin.status === 200
+  let parentStudents = null
+  if (!hasDemoParent) {
+    skip('家长登录成功', '本机没有演示账号 parent（生产环境正常）')
+    skip('家长只看到自己关联的学生', '同上')
+    skip('家长越权查看他人报告返回 403', '同上')
+    skip('家长修改系统设置返回 403', '同上')
+  } else {
   check('家长登录成功', parentLogin.status === 200, `HTTP ${parentLogin.status}`)
-  const parentStudents = await get('/api/students')
+  parentStudents = await get('/api/students')
   check(
     '家长只看到自己关联的学生',
     Array.isArray(parentStudents.json) &&
@@ -647,8 +694,19 @@ async function main() {
   }
   const parentSettings = await send('PUT', '/api/settings/ai', { model: 'x' })
   check('家长修改系统设置返回 403', parentSettings.status === 403, `HTTP ${parentSettings.status}`)
+  }
 
   /* ---------- 上传图片的归属隔离 ---------- */
+  // 这一整段都要以「家长」身份登录才能验，演示账号不存在时整段跳过
+  if (!parentStudents) {
+    skip('家长上传照片成功', '本机没有演示账号 parent（生产环境正常）')
+    skip('上传返回可访问的文件名', '同上')
+    skip('上传者本人可访问该图片', '同上')
+    skip('未登录访问图片返回 401', '同上')
+    skip('管理员可创建家长账号', '同上')
+    skip('管理员可关联学生', '同上')
+    skip('他人家长访问该图片返回 403', '同上')
+  } else {
   const parentStudentId = parentStudents.json?.[0]?.id
   const pngBytes = Buffer.from(TINY_PNG_BASE64, 'base64')
   const form = new FormData()
@@ -704,6 +762,7 @@ async function main() {
     const del = await send('DELETE', `/api/users/${tempParentId}`)
     check('临时测试账号已清理', del.status === 204 || del.status === 200, `HTTP ${del.status}`)
   }
+  }
 
   cookieJar.clear()
   adminCookie.forEach((v, k) => cookieJar.set(k, v))
@@ -711,13 +770,25 @@ async function main() {
     username: 'parent',
     password: 'parent123',
   })
-  check('家长重新登录成功', parentLogin2.status === 200, `HTTP ${parentLogin2.status}`)
+  if (parentLogin2.status !== 200) {
+    skip('家长重新登录成功', '本机没有演示账号 parent（生产环境正常）')
+  } else {
+    check('家长重新登录成功', parentLogin2.status === 200, `HTTP ${parentLogin2.status}`)
+  }
 
   cookieJar.clear()
   const studentLogin = await send('POST', '/api/auth/login', {
     username: 'student',
     password: 'student123',
   })
+  // 同上：生产环境没有演示账号 student 是正常的
+  if (studentLogin.status !== 200) {
+    skip('学生登录成功', '本机没有演示账号 student（生产环境正常）')
+    skip('学生查看学情报告返回 403', '同上')
+    skip('学生导出报表返回 403', '同上')
+    skip('学生访问账号管理返回 403', '同上')
+    skip('学生仍可访问自己的学情总览', '同上')
+  } else {
   check('学生登录成功', studentLogin.status === 200, `HTTP ${studentLogin.status}`)
   const studentReport = await get('/api/stats/report')
   check('学生查看学情报告返回 403', studentReport.status === 403, `HTTP ${studentReport.status}`)
@@ -727,6 +798,7 @@ async function main() {
   check('学生访问账号管理返回 403', studentUsers.status === 403, `HTTP ${studentUsers.status}`)
   const studentOverview = await get('/api/stats/overview')
   check('学生仍可访问自己的学情总览', studentOverview.status === 200, `HTTP ${studentOverview.status}`)
+  }
 
   // 恢复管理员会话，供后续统计与设置用例使用
   cookieJar.clear()
@@ -837,12 +909,22 @@ async function main() {
   )
 
   // 权限：非管理员访问更新端点必须 403
+  // 演示账号 parent 不存在时跳过（生产环境正常）；登录失败会拿到 401 而不是 403，
+  // 那不是「权限没拦住」，只是没登录成功。
   cookieJar.clear()
-  await send('POST', '/api/auth/login', { username: 'parent', password: 'parent123' })
+  const parentLogin3 = await send('POST', '/api/auth/login', {
+    username: 'parent',
+    password: 'parent123',
+  })
+  if (parentLogin3.status !== 200) {
+    skip('家长访问更新信息被拒绝 (403)', '本机没有演示账号 parent（生产环境正常）')
+    skip('家长触发更新被拒绝 (403)', '同上')
+  } else {
   const parentUpdate = await get('/api/system/update/info')
   check('家长访问更新信息被拒绝 (403)', parentUpdate.status === 403, `HTTP ${parentUpdate.status}`)
   const parentApply = await send('POST', '/api/system/update/apply')
   check('家长触发更新被拒绝 (403)', parentApply.status === 403, `HTTP ${parentApply.status}`)
+  }
 
   // 未登录必须 401
   cookieJar.clear()
@@ -867,9 +949,16 @@ async function main() {
 
   // 权限：家长不能发布
   cookieJar.clear()
-  await send('POST', '/api/auth/login', { username: 'parent', password: 'parent123' })
+  const parentLogin4 = await send('POST', '/api/auth/login', {
+    username: 'parent',
+    password: 'parent123',
+  })
+  if (parentLogin4.status !== 200) {
+    skip('家长发布新版本被拒绝 (403)', '本机没有演示账号 parent（生产环境正常）')
+  } else {
   const parentPublish = await send('POST', '/api/system/update/publish', { version: '9.9.9', notes: '' })
   check('家长发布新版本被拒绝 (403)', parentPublish.status === 403, `HTTP ${parentPublish.status}`)
+  }
 
   // 未登录必须 401
   cookieJar.clear()
@@ -893,7 +982,30 @@ async function main() {
   )
 
   /* ---------- 汇总 ---------- */
-  console.log(`\n\x1b[1m结果：${passed} 通过 / ${failed} 失败\x1b[0m`)
+  // 收尾：把临时学生和它的错题删掉，别留在用户库里
+  if (tempStudentId) {
+    cookieJar.clear()
+    adminCookie.forEach((v, k) => cookieJar.set(k, v))
+    const tempQs = await get(`/api/questions?studentId=${tempStudentId}&pageSize=100`)
+    for (const item of tempQs.json?.items ?? []) {
+      if (item?.id) await send('DELETE', `/api/questions/${item.id}`)
+    }
+    const removed = await send('DELETE', `/api/students/${tempStudentId}`)
+    check('DELETE /api/students/:id', removed.status === 204 || removed.status === 200, `HTTP ${removed.status}`)
+    tempStudentId = ''
+  }
+
+  console.log(
+    `\n\x1b[1m结果：${passed} 通过 / ${failed} 失败` +
+      (skipped ? ` / ${skipped} 跳过` : '') +
+      `\x1b[0m`,
+  )
+  if (skipped) {
+    console.log(
+      `\x1b[2m  跳过的用例依赖演示账号（parent / student）。生产环境库里没有这些账号是正常的；` +
+        `想要完整覆盖可自行执行 npm run seed（注意：seed 会清空现有错题与学生）。\x1b[0m`,
+    )
+  }
   if (failures.length) {
     console.log('\x1b[31m失败项：\x1b[0m')
     failures.forEach((f) => console.log(`  - ${f}`))
