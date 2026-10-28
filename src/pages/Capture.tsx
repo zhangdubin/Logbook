@@ -498,7 +498,7 @@ export default function Capture() {
                   >
                     <p>
                       这次整体置信度只有 {pctText(result.draft.confidence)}，
-                      多半是字迹潦草、光线不足，或者一��拍进去好几道题。
+                      多半是字迹潦草、光线不足，或者一次拍进去好几道题。
                       下面三个办法都能救，选一个就行：
                     </p>
                     <div className="mt-2.5 flex flex-wrap gap-2">
