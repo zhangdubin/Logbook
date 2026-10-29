@@ -184,6 +184,43 @@ console.log('\n\x1b[1m模型连通性：MiniMax 风格返回形状\x1b[0m')
   await mock.close()
 }
 
+/* ---- 2b. MiniMax 真实的 401 返回形状（2026-10 用官方端点实测抄下来的） ---- */
+{
+  const mock = await startMock(() => ({
+    status: 401,
+    json: {
+      type: 'error',
+      error: {
+        type: 'authorized_error',
+        message:
+          "login fail: Please carry the API secret key in the 'Authorization' field of the request header (1004)",
+        http_code: '401',
+      },
+      request_id: '0731e38243cf081717e59585fb22b1b3',
+    },
+  }))
+  let msg = ''
+  let providerCode = 0
+  try {
+    await callChat({
+      cfg: { enabled: true, apiKey: 'sk-dummy', baseUrl: mock.baseUrl, model: 'MiniMax-M3.1-Flash' },
+      messages: [{ role: 'user', content: 'OK' }],
+      json: false,
+      timeoutMs: 8000,
+    })
+  } catch (err) {
+    msg = err.message
+    providerCode = err.providerCode ?? 0
+  }
+  check(
+    'MiniMax 真实 401 形状 → 识别出认证失败(1004)',
+    /认证失败/.test(msg) || /1004/.test(msg),
+    msg.slice(0, 80),
+  )
+  check('  providerCode = 1004', providerCode === 1004, String(providerCode))
+  await mock.close()
+}
+
 /* ---- 3. 不认识 max_completion_tokens 的老网关 → 回退 max_tokens ---- */
 {
   const mock = await startMock((body) => {

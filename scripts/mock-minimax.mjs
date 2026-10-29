@@ -73,6 +73,52 @@ const server = http.createServer((req, res) => {
       })
     }
 
+    // 返回合法 JSON（模拟模型正常分析）
+    if (mode === 'json') {
+      const payload = {
+        subject: '数学',
+        questionType: '应用题',
+        knowledgePoints: ['行程问题'],
+        diagnosis: {
+          type: 'method',
+          confidence: 0.7,
+          reason: '模型给出的判断',
+          evidence: ['模型依据1'],
+        },
+        rootCauses: ['模型给出的根因一', '模型给出的根因二'],
+        correctSteps: [
+          { title: '审题', detail: '把条件和问题圈出来' },
+          { title: '列式', detail: '根据数量关系列式计算' },
+        ],
+        knowledgeGaps: ['速度与时间的关系'],
+        tips: ['多练行程问题'],
+        similarQuestions: [
+          { stem: '甲乙相距 400 千米，相向而行，速度 50 和 50，求时间', answer: '4 小时', analysis: '速度和 100', difficulty: 3 },
+          { stem: '相距 240 千米，速度 30 和 30', answer: '4 小时', analysis: '速度和 60', difficulty: 3 },
+          { stem: '相距 120 千米，速度 20 和 40', answer: '2 小时', analysis: '速度和 60', difficulty: 2 },
+        ],
+        practicePlan: [
+          { day: 1, focus: '复习', task: '复习行程问题', minutes: 20 },
+          { day: 2, focus: '练习', task: '做 3 道题', minutes: 20 },
+          { day: 3, focus: '练习', task: '做 3 道题', minutes: 20 },
+          { day: 4, focus: '错题', task: '整理错题', minutes: 20 },
+          { day: 5, focus: '变式', task: '做变式题', minutes: 20 },
+          { day: 6, focus: '巩固', task: '重做', minutes: 20 },
+          { day: 7, focus: '复盘', task: '复盘', minutes: 20 },
+        ],
+        summary: '模型生成的摘要',
+      }
+      return send({
+        choices: [
+          {
+            index: 0,
+            finish_reason: 'stop',
+            message: { role: 'assistant', content: JSON.stringify(payload) },
+          },
+        ],
+      })
+    }
+
     // 正常：预算够就答
     const need = Math.ceil(REASONING.length / 2) + 8
     if (budget && budget < need) {

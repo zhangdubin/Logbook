@@ -126,6 +126,34 @@ const PROVIDER_ERRORS = {
 }
 
 function providerBodyError(data) {
+  /* --- 形状 A：{ type: 'error', error: { type, message, http_code } } ---
+   *
+   * 实测 MiniMax 官方接口（2026-10 用真实端点验证）：
+   *   密钥无效 → **HTTP 401**，body 是
+   *   {"type":"error","error":{"type":"authorized_error",
+   *     "message":"login fail: ... (1004)","http_code":"401"}}
+   * 错误码 1004 藏在 message 里。
+   *
+   * 另一些服务在 HTTP 200 下也用这个形状，要一并兜住，
+   * 否则会掉进「模型返回内容为空」这个毫无指向性的分支。
+   */
+  if (data?.type === 'error' || data?.error?.type || data?.error?.http_code) {
+    const e = data?.error ?? {}
+    const rawMsg = String(e.message ?? data?.message ?? '').trim()
+    // message 里通常带着括号里的错误码，如 "... (1004)"
+    // 优先用 message 里的**业务错误码**（如 1004 认证失败），
+    // 而不是 http_code（那只是把 HTTP 状态码重复了一遍，信息量低）
+    const codeMatch = rawMsg.match(/\((\d{4})\)/)
+    const code = Number(codeMatch?.[1] ?? e.http_code ?? 0)
+    const known = code ? PROVIDER_ERRORS[code] : ''
+    const text = known ? `${known}${rawMsg ? `（${rawMsg}）` : ''}` : rawMsg || '服务端返回错误'
+    const err = new Error(`模型服务返回错误：${text}`)
+    err.status = Number(e.http_code ?? 0) || 0
+    if (code) err.providerCode = code
+    return err
+  }
+
+  /* --- 形状 B：{ base_resp: { status_code, status_msg } } --- */
   const br = data?.base_resp
   if (!br || typeof br !== 'object') return null
   const code = Number(br.status_code ?? br.statusCode ?? 0)
@@ -219,6 +247,28 @@ export async function callChat({
         )
         err.status = res.status
         err.rawBody = text
+
+        /* 错误响应体里往往也带着真正的错误码，别浪费。
+         *
+         * 实测 MiniMax 官方端点：密钥无效 → **HTTP 401**，body 是
+         *   {"type":"error","error":{"type":"authorized_error",
+         *     "message":"login fail: ... (1004)","http_code":"401"}}
+         * 光看 HTTP 401 只能猜「可能是密钥错了」；把 1004 解析出来，
+         * 才能明确告诉用户「API Key 无效或已过期」。
+         */
+        try {
+          const body = JSON.parse(text)
+          const pe = providerBodyError(body)
+          if (pe) {
+            pe.status = res.status
+            throw pe
+          }
+        } catch (parseErr) {
+          if (parseErr?.providerCode !== undefined || parseErr?.message?.startsWith('模型服务返回错误')) {
+            throw parseErr
+          }
+          // 不是 JSON 或没有结构化错误码 → 保留原来的 HTTP 错误
+        }
         throw err
       }
 
