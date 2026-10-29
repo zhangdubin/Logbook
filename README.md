@@ -226,7 +226,7 @@ curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
 ```bash
 curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
   https://raw.githubusercontent.com/zhangdubin/Logbook/main/deploy/install.sh \
-  | sudo bash -s -- --repo zhangdubin/Logbook --version 1.1.2 --dir /opt/cuoti-analytics
+  | sudo bash -s -- --repo zhangdubin/Logbook --version 1.1.11 --dir /opt/cuoti-analytics
 ```
 
 安装脚本会自动完成：检查 Node 20+ → 查 GitHub Release → 下载并校验 sha256 → 安装到
@@ -237,7 +237,7 @@ curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
 
 ```bash
 sudo bash /opt/cuoti-analytics/deploy/upgrade.sh          # 升到最新版本
-sudo bash /opt/cuoti-analytics/deploy/upgrade.sh --version 1.1.0
+sudo bash /opt/cuoti-analytics/deploy/upgrade.sh --version 1.1.11
 ```
 
 升级会**保留**数据库（`server/data/`）、上传图片（`server/uploads/`）和 `.env`，
@@ -257,8 +257,8 @@ curl -s http://127.0.0.1:5181/api/version  # 当前版本号
 
 | 包 | 文件名 | 内容 | 用途 |
 | --- | --- | --- | --- |
-| 源码包 | `cuoti-analytics-v1.1.2.tar.gz` | 全部源码（不含 `dist/`） | Git 历史、二次开发 |
-| **部署版本** | `cuoti-analytics-v1.1.2-deploy.tar.gz` | 源码 + **已构建好的 `dist/`** + `deploy/` | **服务器直接跑，无需装构建工具链** |
+| 源码包 | `cuoti-analytics-v1.1.11.tar.gz` | 全部源码（不含 `dist/`） | Git 历史、二次开发 |
+| **部署版本** | `cuoti-analytics-v1.1.11-deploy.tar.gz` | 源码 + **已构建好的 `dist/`** + `deploy/` | **服务器直接跑，无需装构建工具链** |
 
 详细的部署步骤、环境变量表、nginx/HTTPS 配置、回滚方法与故障排查见
 [docs/05 · 开发与部署指南](docs/05-开发与部署指南.md)。
@@ -268,15 +268,16 @@ curl -s http://127.0.0.1:5181/api/version  # 当前版本号
 **一键安装（推荐）**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zhangdubin/Logbook/main/deploy/install-docker.sh | sudo bash
+curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
+  https://raw.githubusercontent.com/zhangdubin/Logbook/main/deploy/install-docker.sh | sudo bash
 ```
 
 脚本会自动：检查 Docker 环境 → 查最新版本 → 下载发布包（Release 附件失败时自动回退到 API tarball）
 → 生成 `.env` 与 compose 覆盖文件 → 构建镜像 → 启动容器 → 健康检查 → 打印访问地址。
 
 ```bash
-# 带参数
-sudo bash install-docker.sh --version 1.1.2 --dir /opt/cuoti --port 5181 --ocr
+# 带参数（当前最新 1.1.11）
+sudo bash install-docker.sh --version 1.1.11 --dir /opt/cuoti-analytics --port 5181 --ocr
 #   --version  指定版本（默认取最新）
 #   --dir      安装目录（默认 /opt/cuoti-analytics）
 #   --port     对外端口（默认 5181）
@@ -288,14 +289,14 @@ sudo bash install-docker.sh --version 1.1.2 --dir /opt/cuoti --port 5181 --ocr
 
 ```bash
 # 构建镜像（VERSION / COMMIT 会写进容器里的版本信息）
-docker build -t cuoti-analytics:1.1.2 \
-  --build-arg VERSION=1.1.2 --build-arg COMMIT=8a46202 .
+docker build -t cuoti-analytics:1.1.11 \
+  --build-arg VERSION=1.1.11 --build-arg COMMIT=13e9bd8 .
 
 # 直接跑
 docker run -d --name cuoti -p 5181:5181 \
   -v cuoti-data:/app/server/data \
   -v cuoti-uploads:/app/server/uploads \
-  cuoti-analytics:1.1.2
+  cuoti-analytics:1.1.11
 
 # 或者用 compose
 docker compose up -d                          # 只起应用
