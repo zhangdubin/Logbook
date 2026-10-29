@@ -393,103 +393,131 @@ const PINYIN_MARKS = 'āáǎàōóǒòēéěèīíǐìūúǔùǖǘǚǜüńňǹ'
 const PINYIN_WORDS = ['拼音', '音节', '多音字', '田字格', '组词', '看图写话', '注音', '声母', '韵母', '整体认读']
 
 /* ---- 知识点映射：学科 -> { 知识点名: 关键词[] } ---- */
-const KNOWLEDGE_KEYWORD_MAP = {
-  数学: {
-    分数运算: ['分数', '分子', '分母', '约分', '通分', '分数乘', '分数除', '真分数', '假分数'],
-    行程问题: ['相遇', '追及', '行程', '速度', '路程', '同时出发', '相向', '同向'],
-    鸡兔同笼: ['鸡兔同笼', '抬腿', '买鸡', '养兔'],
-    几何面积: ['面积', '周长', '三角形', '长方形', '正方形', '平行四边形', '梯形', '圆', '扇形'],
-    立体图形: ['体积', '表面积', '正方体', '长方体', '圆柱', '圆锥', '容积'],
-    代数方程: ['方程', '解方程', '列方程', '方程组', '不等式', '设未知数'],
-    数的认识: ['质数', '合数', '因数', '倍数', '奇数', '偶数', '质因数', '整除', '最大公因数', '最小公倍数'],
-    小数百分数: ['小数', '百分数', '百分率', '折扣', '利率', '增长率', '保留两位小数'],
-    比例与比例尺: ['比例', '正比例', '反比例', '比例尺', '按比例'],
-    统计与可能性: ['平均数', '中位数', '众数', '条形统计', '扇形统计', '折线统计', '可能性'],
-    运算与简算: ['简便计算', '脱式', '运算律', '交换律', '结合律', '分配律', '简算', '口算'],
-    数量关系: ['一共', '还剩', '剩下', '又买', '增加', '减少', '平均', '每份', '多多少', '少多少', '每组', '每盒', '每瓶', '一半', '分成'],
-    综合与实践: ['综合与实践', '数学广角', '搭配', '沏茶', '烙饼', '田忌赛马'],
-  },
-  语文: {
-    字词基础: ['生字', '组词', '多音字', '田字格', '注音', '部首', '笔画', '查字典'],
-    拼音: ['拼音', '音节', '声母', '韵母', '整体认读', '标声调'],
-    词语积累: ['近义词', '反义词', '词语搭配', '量词', '成语', '俗语', '四字词语'],
-    句子: ['造句', '扩句', '缩句', '改写', '句式', '标点', '病句', '修辞'],
-    修辞手法: ['比喻', '拟人', '排比', '夸张', '对偶', '反复', '设问', '反问'],
-    阅读理解: ['阅读', '短文', '课文', '段意', '中心思想', '中心句', '概括', '体会情感'],
-    古诗文: ['古诗', '默写', '文言文', '诗句', '唐诗', '宋词', '实词', '虚词', '翻译句子'],
-    病句修改: ['病句', '修改病句', '语序', '搭配不当', '成分残缺'],
-    作文审题: ['作文', '写话', '习作', '不少于', '材料', '开头', '结尾', '立意'],
-    文学常识: ['文学常识', '作者', '朝代', '名句', '名著', '诗人'],
-    口语交际: ['口语交际', '交际', '劝说', '建议'],
-    综合性学习: ['综合性学习', '活动', '宣传', '标语', '倡议书'],
-  },
-  英语: {
-    词汇与拼写: ['单词', '拼写', '词汇', '音标', '短语', '固定搭配', '单词拼写'],
-    语法与时态: ['时态', '一般现在时', '一般过去时', '现在完成时', '过去完成时', '一般将来时', '第三人称单数', '情态动词'],
-    句型转换: ['句型转换', '同义句', '改写', '否定句', '疑问句', '感叹句', 'there be'],
-    完形填空: ['完形填空', '完形'],
-    阅读理解: ['阅读理解', '阅读', 'passage', '短文'],
-    语法填空: ['语法填空', '用括号内词的适当形式', '首字母填空', '选词填空'],
-    翻译: ['翻译', '汉译英', '英汉互译'],
-    写作: ['书面表达', '写作', '作文', '写一篇'],
-    从句: ['宾语从句', '定语从句', '状语从句'],
-    介词与冠词: ['介词', '冠词', 'in', 'on', 'at'],
-    被动语态: ['被动语态', 'was done', 'were done'],
-  },
-  物理: {
-    运动与力: ['速度', '路程', '加速度', '力', '重力', '弹力', '摩擦力', '惯性', '二力平衡', '平衡力'],
-    压强: ['压强', '大气压', '压力', '受力面积'],
-    浮力: ['浮力', '漂浮', '下沉', '排开液体', '阿基米德'],
-    光现象: ['光的反射', '折射', '凸透镜', '凹透镜', '焦距', '色散', '直线传播'],
-    声现象: ['声', '音调', '响度', '音色', '噪声', '超声', '次声'],
-    电与电路: ['电压', '电流', '电路', '串联', '并联', '电阻', '电功率', '电路图'],
-    功和机械能: ['功', '功率', '机械能', '动能', '势能', '滑轮', '杠杆', '斜面'],
-    内能与热: ['内能', '比热容', '热量', '熔化', '凝固', '蒸发', '沸腾', '温度'],
-    质量与密度: ['质量', '密度', '天平', '量筒', '体积'],
-  },
-  化学: {
-    物质的构成: ['分子', '原子', '离子', '元素', '原子核', '质子', '中子', '电子'],
-    元素与周期表: ['元素周期表', '相对原子质量', '元素符号', '金属', '非金属'],
-    化学式与化合价: ['化学式', '化合价', '相对分子质量', '化学方程式'],
-    质量守恒: ['质量守恒', '化学变化', '物理变化', '化学反应'],
-    溶液: ['溶液', '溶解度', '饱和溶液', '结晶', '稀释', '溶质', '溶剂'],
-    酸碱盐: ['酸', '碱', '盐', '中和反应', '指示剂', '酚酞', '石蕊', 'pH'],
-    化学反应: ['化合反应', '分解反应', '置换反应', '复分解反应', '氧化还原'],
-    实验与操作: ['试管', '酒精灯', '集气瓶', '铁架台', '过滤', '蒸发皿', '坩埚', '量筒', '滴管'],
-  },
-  生物: {
-    细胞与组织: ['细胞', '组织', '器官', '系统', '显微镜', '细胞核', '细胞膜'],
-    植物与光合作用: ['光合作用', '呼吸作用', '蒸腾作用', '根', '茎', '叶', '花', '种子', '传粉', '受精'],
-    动物与呼吸: ['肺泡', '心脏', '血液循环', '消化', '吸收', '关节', '肌肉', '神经', '反射'],
-    遗传与变异: ['遗传', '染色体', 'DNA', '基因', '生殖', '发育', '变异'],
-    生态系统: ['生态系统', '食物链', '生产者', '消费者', '分解者', '种群', '生态平衡'],
-    健康与安全: ['健康', '安全', '急救', '传染病', '垃圾分类', '营养'],
-    实验探究: ['实验', '对照实验', '变量', '探究'],
-  },
-  地理: {
-    地球与地图: ['地球', '经线', '纬线', '经度', '纬度', '半球', '比例尺', '方向', '地图'],
-    天气与气候: ['天气', '气候', '降水', '干湿', '季风', '热带', '温带', '寒带', '台风', '寒潮'],
-    地形与地貌: ['地形', '山地', '平原', '高原', '盆地', '丘陵', '山脉', '等高线', '海拔'],
-    居民与聚落: ['人口', '城市', '乡村', '聚落', '人种', '语言', '宗教'],
-    农业与工业: ['农业', '工业', '种植业', '畜牧业', '工业', '矿产', '钢铁', '石油', '煤炭'],
-    区域地理: ['长江', '黄河', '珠江', '青藏高原', '黄土高原', '东北平原', '柴达木', '季风气候', '板块', '洋流', '地震', '火山'],
-  },
-  历史: {
-    史前与早期国家: ['元谋人', '北京人', '半坡', '河姆渡', '炎帝', '黄帝', '夏', '商', '西周', '分封'],
-    古代经济与科技: ['铁器', '牛耕', '丝绸之路', '活字印刷', '指南针', '火药', '瓷器', '科举'],
-    近代史: ['鸦片战争', '南京条约', '洋务运动', '甲午', '戊戌变法', '义和团', '辛亥革命', '新文化运动'],
-    现代史: ['五四', '中国共产党', '北伐', '长征', '遵义会议', '九一八', '七七事变', '抗日', '解放战争', '开国大典'],
-    革命与战争: ['战争', '条约', '革命', '起义', '战役'],
-    文化与思想: ['孔子', '百家争鸣', '司马迁', '李白', '杜甫', '唐诗', '宋词', '活字印刷', '文艺复兴'],
-  },
-  道法: {
-    成长与心理: ['青春期', '情绪', '自我', '心理', '独立性', '逆反'],
-    友谊与交往: ['朋友', '友谊', '交往', '师生', '父母', '真诚', '尊重'],
-    法治教育: ['宪法', '法律', '法治', '权利', '义务', '违法犯罪', '依法治国', '未成年人'],
-    生命与安全: ['生命', '安全', '急救', '自护', '防灾'],
-    国家与社会: ['国家', '民族', '公民', '社会', '人民代表大会', '中国共产党', '价值观', '劳动者'],
-    规则与诚信: ['规则', '诚信', '道德', '正义', '责任', '诚信经营'],
-  },
+/**
+ * 知识点表：学科 -> [{ name, level, words[] }]
+ *
+ * 设计原则（Lead 要求：建议要「准」不要「泛」）：
+ *   1. **从题干推出知识点**，而不是套大类 —— 「鸡兔同笼」「相遇/追及」「面积/周长」
+ *      「分数加减」「修路工程」「病句」「时态填空」各自成条；
+ *   2. 一道题可能涉及多个知识点 -> 输出 1~3 个，按证据强度排序；
+ *   3. 每条都带 **依据**（命中的词），前端能显示「为什么这么判」；
+ *   4. 判不出来要老实：给一条泛化但诚实的知识点，置信度压低；
+ *   5. 名字**刻意避开** server/problemModels.js 里的「题目模型」同名项
+ *      （否则模型和知识点会重复出现），具体解法交给模型层补。
+ */
+const KNOWLEDGE_POINTS = {
+  数学: [
+    { name: '速度与时间问题', level: '进阶', words: ['相遇', '相向而行', '同向', '追及', '追上', '速度', '路程', '每小时', '行驶', '同时出发', '几小时后', '相距'] },
+    { name: '面积与周长', level: '进阶', words: ['面积', '周长', '长方形', '正方形', '三角形', '梯形', '平行四边形', '圆', '扇形', '平方厘米', '平方米'] },
+    { name: '立体图形体积与表面积', level: '进阶', words: ['体积', '表面积', '容积', '正方体', '长方体', '圆柱', '圆锥', '立方米', '升'] },
+    { name: '分数运算', level: '进阶', words: ['分数', '分子', '分母', '约分', '通分', '最简分数', '真分数', '假分数', '同分母', '异分母'] },
+    { name: '百分数与折扣', level: '进阶', words: ['百分数', '百分比', '折扣', '打折', '成数', '利率', '利息', '增长率', '百分之'] },
+    { name: '比与比例的应用', level: '进阶', words: ['比', '比例', '正比例', '反比例', '按比例', '比例尺', '最简整数比'] },
+    { name: '工程效率问题', level: '进阶', words: ['工作效率', '工作总量', '合作', '单独完成', '一起做', '几天完成', '修路', '铺路', '建桥'] },
+    { name: '浓度计算', level: '难点', words: ['浓度', '盐水', '糖水', '溶质', '溶剂', '加水', '蒸发', '百分之几的盐水'] },
+    { name: '利润与经济账', level: '进阶', words: ['利润', '成本', '售价', '进价', '促销', '买进', '卖出', '每件', '批发', '零售'] },
+    { name: '平均数的应用', level: '进阶', words: ['平均', '人均', '平均每', '平均成绩', '平均身高'] },
+    { name: '鸡兔同笼问题', level: '难点', words: ['鸡兔同笼', '鸡和兔', '抬腿', '头和脚', '笼子里有鸡'] },
+    { name: '植树与间隔问题', level: '进阶', words: ['植树', '间隔', '每隔', '两端都栽', '一边栽', '一段路', '锯木头', '爬楼梯'] },
+    { name: '和差倍问题', level: '进阶', words: ['和差', '和倍', '差倍', '比多', '比少', '多多少', '少多少', '甲比乙'] },
+    { name: '年龄问题', level: '进阶', words: ['年龄', '几岁', '今年', '明年', '爸爸', '母亲', '儿子', '女儿'] },
+    { name: '盈亏问题', level: '难点', words: ['盈亏', '多出', '不足', '恰好', '平分', '每人分', '剩下的人'] },
+    { name: '归一与归总问题', level: '进阶', words: ['归一', '照这样计算', '每份', '总数', '照着计算', '这种规格'] },
+    { name: '数论初步', level: '进阶', words: ['因数', '倍数', '质数', '合数', '素数', '整除', '余数', '最大公因数', '最小公倍数'] },
+    { name: '运算定律与简便计算', level: '基础', words: ['简便计算', '简便运算', '运算律', '交换律', '结合律', '分配律', '脱式', '简算', '凑整'] },
+    { name: '负数与数轴', level: '基础', words: ['负数', '正数', '数轴', '相反数', '绝对值'] },
+    { name: '统计与可能性', level: '基础', words: ['统计图', '条形', '折线', '扇形', '中位数', '众数', '可能性', '摸球'] },
+    { name: '测量与单位换算', level: '基础', words: ['单位换算', '进率', '换算成', '化成米', '化成千克'] },
+    { name: '方程与不等式', level: '进阶', words: ['方程', '解方程', '列方程', '方程组', '不等式', '设未知数', 'x ='] },
+    { name: '简单的数量关系', level: '基础', words: ['一共', '还剩', '剩下', '又买', '又来', '增加', '减少', '平均分', '每份', '多多少', '少多少', '分成', '送给他'] },
+    { name: '综合与实践', level: '基础', words: ['综合与实践', '数学广角', '搭配', '沏茶', '烙饼', '田忌赛马'] },
+  ],
+  语文: [
+    { name: '拼音与多音字', level: '基础', words: ['拼音', '音节', '多音字', '声母', '韵母', '整体认读', '注音', '读音', '田字格', '标声调'] },
+    { name: '字词积累', level: '基础', words: ['生字', '组词', '近义词', '反义词', '词语搭配', '量词', '成语', '四字词语', '字词'] },
+    { name: '病句辨析', level: '进阶', words: ['病句', '修改病句', '语病', '搭配不当', '成分残缺', '重复啰嗦', '语序', '修改病句'] },
+    { name: '修辞手法', level: '进阶', words: ['比喻', '拟人', '排比', '夸张', '对偶', '设问', '反问', '修辞手法', '反复'] },
+    { name: '标点符号运用', level: '基础', words: ['标点', '冒号', '引号', '感叹号', '破折号', '省略号', '顿号'] },
+    { name: '句子练习', level: '基础', words: ['造句', '扩句', '缩句', '改写', '仿写', '照样子', '把字句', '被字句', '关联词'] },
+    { name: '古诗文默写', level: '基础', words: ['默写', '古诗', '诗句', '补充诗句', '唐诗', '宋词', '名句', '朝辞白帝', '床前明月光'] },
+    { name: '现代文阅读', level: '进阶', words: ['阅读', '短文', '课文', '语段', '段意', '中心思想', '中心句', '概括', '主要内容', '体会情感', '作者'] },
+    { name: '文言文释义', level: '难点', words: ['文言', '文言文', '之乎者也', '加点字意思', '翻译句子', '实词', '虚词'] },
+    { name: '口语交际', level: '基础', words: ['口语交际', '交际', '劝说', '建议', '礼貌用语', '转述', '商量'] },
+    { name: '作文与习作', level: '进阶', words: ['作文', '习作', '写话', '不少于', '材料作文', '看图写话', '看图说话', '立意'] },
+    { name: '文学常识与名著', level: '进阶', words: ['文学常识', '名著', '四大名著', '作者', '朝代', '诗人', '西游记', '水浒传'] },
+    { name: '说明方法与课文理解', level: '进阶', words: ['说明方法', '列数字', '作比较', '举例子', '打比方', '分类别'] },
+  ],
+  英语: [
+    { name: '语法与时态', level: '进阶', words: ['时态', '一般现在时', '一般过去时', '现在完成时', '过去完成时', '一般将来时', '进行时', '第三人称单数', '注意时态'] },
+    { name: '完形填空技巧', level: '进阶', words: ['完形填空', '完形', '选词填空', '首字母填空', '语境'] },
+    { name: '英语阅读技巧', level: '进阶', words: ['阅读理解', '短文理解', '细节理解', '主旨大意', 'the passage', 'best answer'] },
+    { name: '词汇与短语', level: '基础', words: ['单词', '词汇', '短语', '固定搭配', '词汇量', '单词拼写'] },
+    { name: '句型转换', level: '进阶', words: ['句型转换', '同义句', '否定句', '一般疑问句', '特殊疑问句', 'there be', '改写'] },
+    { name: '情景交际', level: '基础', words: ['情景交际', '交际用语', '礼貌用语', '情景对话'] },
+    { name: '音标与单词拼写', level: '基础', words: ['音标', '发音', '重音', '拼写', '元音'] },
+    { name: '翻译与表达', level: '进阶', words: ['翻译', '汉译英', '英汉互译', '书面表达', '写作', '写一篇', '英文作文'] },
+    { name: '名词代词与冠词', level: '进阶', words: ['名词', '代词', '单复数', '冠词', '物主代词', '人称代词'] },
+    { name: '形容词副词与比较级', level: '进阶', words: ['形容词', '副词', '比较级', '最高级'] },
+    { name: '语法填空技巧', level: '进阶', words: ['语法填空', '用括号内词的适当形式', '动词填空', '时态填空', '词形变化'] },
+  ],
+  物理: [
+    { name: '力学与运动', level: '进阶', words: ['摩擦力', '推力', '拉力', '重力', '弹力', '惯性', '二力平衡', '平衡力', '加速度', '运动状态', '受力分析', '牛顿第一定律'] },
+    { name: '压强浮力与密度', level: '进阶', words: ['压强', '浮力', '密度', '液体压强', '大气压', '漂浮', '下沉', '排开液体', '受力面积'] },
+    { name: '电与电路', level: '进阶', words: ['电流', '电压', '电阻', '电路', '串联', '并联', '电功率', '欧姆定律', '电路图'] },
+    { name: '光现象', level: '进阶', words: ['光的反射', '折射', '凸透镜', '凹透镜', '焦距', '色散', '直线传播', '光的色散'] },
+    { name: '声现象', level: '基础', words: ['声', '音调', '响度', '音色', '噪声', '超声', '次声', '频率'] },
+    { name: '内能与热学', level: '进阶', words: ['内能', '比热容', '热量', '熔化', '凝固', '蒸发', '沸腾', '温度'] },
+    { name: '功与机械能', level: '进阶', words: ['功率', '机械能', '动能', '势能', '滑轮', '杠杆', '斜面', '机械效率', '做功'] },
+    { name: '质量与密度', level: '基础', words: ['质量', '天平', '量筒', '刻度', '物质属性', '密度计'] },
+  ],
+  化学: [
+    { name: '化学式与元素', level: '进阶', words: ['化学式', '元素', '元素符号', '相对原子质量', '化合价', '相对分子质量'] },
+    { name: '化学方程式书写', level: '进阶', words: ['化学方程式', '配平', '反应方程式', '文字表达式', '书写化学'] },
+    { name: '溶液与溶解度', level: '进阶', words: ['溶液', '溶解度', '饱和溶液', '结晶', '稀释', '溶质', '溶剂', '乳化'] },
+    { name: '酸碱盐', level: '进阶', words: ['酸', '碱', '盐', '中和反应', '指示剂', '酚酞', '石蕊', '复分解反应', '置换反应'] },
+    { name: '金属与活动性', level: '进阶', words: ['金属', '铁', '铝', '锌', '活动性', '生锈', '锈蚀', '矿物'] },
+    { name: '质量守恒与变化', level: '基础', words: ['质量守恒', '化学变化', '物理变化', '化学反应', '性质与变化'] },
+    { name: '化学实验操作', level: '基础', words: ['试管', '酒精灯', '集气瓶', '铁架台', '过滤', '蒸发皿', '坩埚', '滴管', '取用', '洗涤'] },
+    { name: '燃烧与能源', level: '基础', words: ['燃烧', '灭火', '可燃物', '灭火器', '化石燃料', '新能源', '污染'] },
+  ],
+  生物: [
+    { name: '细胞与显微镜', level: '基础', words: ['细胞', '组织', '器官', '系统', '显微镜', '细胞核', '细胞膜', '装片'] },
+    { name: '光合作用与呼吸作用', level: '进阶', words: ['光合作用', '呼吸作用', '蒸腾作用', '叶绿体', '气孔', '光能', '淀粉'] },
+    { name: '生态系统与食物链', level: '进阶', words: ['生态系统', '食物链', '食物网', '生产者', '消费者', '分解者', '能量流动', '种群', '生态平衡'] },
+    { name: '遗传与变异', level: '进阶', words: ['遗传', '染色体', 'DNA', '基因', '变异', '性状', '亲子鉴定'] },
+    { name: '人体消化与循环', level: '进阶', words: ['消化', '吸收', '小肠', '胃', '血液循环', '心脏', '血管', '肺泡', '血液'] },
+    { name: '神经与反射', level: '进阶', words: ['神经', '反射', '神经元', '反射弧', '大脑', '脊髓', '条件反射'] },
+    { name: '生殖与发育', level: '进阶', words: ['生殖', '发育', '青春期', '受精', '胚胎', '生长', '第二性征'] },
+    { name: '生物多样性与保护', level: '基础', words: ['生物多样性', '生态平衡', '保护环境', '濒危', '垃圾分类', '自然保护区'] },
+  ],
+  地理: [
+    { name: '地球与经纬网', level: '进阶', words: ['经纬度', '经线', '纬线', '半球', '地球自转', '地球公转', '经度', '纬度'] },
+    { name: '地图与等高线', level: '进阶', words: ['等高线', '地形图', '地图', '图例', '方向', '海拔', '比例尺'] },
+    { name: '天气与气候', level: '进阶', words: ['气候', '天气', '降水量', '温度带', '热带', '温带', '寒带', '季风', '地中海气候', '干湿'] },
+    { name: '地形与地貌', level: '基础', words: ['地形', '山地', '平原', '高原', '盆地', '丘陵', '山脉', '三角洲'] },
+    { name: '河流与海洋', level: '进阶', words: ['河流', '湖泊', '洋流', '长江', '黄河', '珠江', '海湾', '汛期'] },
+    { name: '人口与聚落', level: '基础', words: ['人口', '聚落', '城市', '乡村', '迁移', '分布'] },
+    { name: '农业与工业', level: '基础', words: ['农业', '工业', '种植业', '畜牧业', '工业分布', '矿产', '钢铁', '石油', '煤炭'] },
+    { name: '中国的地理', level: '进阶', words: ['中国', '东北平原', '青藏高原', '黄土高原', '秦岭', '季风区', '长江', '黄河'] },
+  ],
+  历史: [
+    { name: '中国古代史', level: '进阶', words: ['秦朝', '汉朝', '唐朝', '宋朝', '元朝', '明朝', '清朝', '三国', '楚汉', '西周', '商朝'] },
+    { name: '中国近代史', level: '难点', words: ['鸦片战争', '南京条约', '甲午', '洋务', '戊戌', '义和团', '辛亥革命', '五四', '抗日', '长征', '遵义会议'] },
+    { name: '世界古代史', level: '进阶', words: ['古埃及', '古巴比伦', '古希腊', '罗马', '汉谟拉比', '金字塔', '雅典', '斯巴达'] },
+    { name: '世界近代史', level: '进阶', words: ['文艺复兴', '工业革命', '美国独立战争', '法国大革命', '殖民扩张', '拿破仑'] },
+    { name: '思想文化与科技', level: '进阶', words: ['孔子', '李白', '杜甫', '司马迁', '活字印刷', '指南针', '火药', '丝绸之路', '百家争鸣'] },
+    { name: '历史事件与评价', level: '基础', words: ['历史事件', '影响', '原因', '评价', '意义', '评价历史人物'] },
+  ],
+  道法: [
+    { name: '宪法与国家权力', level: '进阶', words: ['宪法', '全国人大', '人民代表大会', '国家权力', '根本大法', '依法治国'] },
+    { name: '公民权利与义务', level: '进阶', words: ['权利', '义务', '公民', '受教育', '人格权', '合法权益'] },
+    { name: '道德与法治', level: '基础', words: ['道德', '法治', '诚信', '友爱', '孝敬', '感恩', '责任', '道德与法治'] },
+    { name: '情绪与青春期', level: '基础', words: ['青春期', '情绪', '心理', '挫折', '自我管理', '逆反'] },
+    { name: '生命与安全', level: '基础', words: ['生命', '安全', '急救', '自护', '防灾', '交通', '消防'] },
+    { name: '规则与法律', level: '基础', words: ['规则', '法律', '违法', '犯罪', '遵纪守法', '违法犯罪'] },
+    { name: '国家与社会', level: '基础', words: ['国家', '民族', '社会', '集体利益', '个人利益', '国家安全', '劳动者', '价值观'] },
+    { name: '消费者权益', level: '基础', words: ['消费者', '经营者', '维权', '投诉', '消费者权益'] },
+  ],
 }
 
 /* ---- 特征计算 ---- */
@@ -921,26 +949,76 @@ export function inferQuestionTypeFromText(text, groups = {}, ctx = {}) {
 }
 
 /**
- * 启发式知识点（纯规则）。
+ * 把各种形态的知识点列表统一成对象数组
+ * [{name, confidence, level, evidence?}] —— 兼容模型给的字符串 / 对象、本地兜底的字符串。
+ */
+export function normalizeKnowledgePointList(list) {
+  if (!Array.isArray(list)) return []
+  const out = []
+  for (const k of list) {
+    if (!k) continue
+    if (typeof k === 'string') {
+      const name = k.trim()
+      if (!name) continue
+      out.push({ name, confidence: 0.6, level: '基础', evidence: [] })
+      continue
+    }
+    const name = String(k.name ?? '').trim()
+    if (!name) continue
+    const confidence = Number.isFinite(Number(k.confidence))
+      ? round2(clamp01(Number(k.confidence)))
+      : 0.6
+    const level = ['基础', '进阶', '难点'].includes(k.level) ? k.level : '基础'
+    const evidence = Array.isArray(k.evidence)
+      ? k.evidence.map((e) => String(e ?? '').trim()).filter(Boolean).slice(0, 5)
+      : []
+    const item = { name, confidence, level }
+    if (evidence.length) item.evidence = evidence
+    if (k.model === true) item.model = true
+    out.push(item)
+  }
+  return out
+}
+
+/**
+ * 从题干推知识点（纯规则，零 AI）。
  *
- * @param {string} text OCR 全部文字
+ * @param {string} text OCR 全部文字（题干 + 选项）
  * @param {string} subject 学科
- * @returns {string[]} 最多 5 个知识点名
+ * @returns {Array<{name:string, confidence:number, level:'基础'|'进阶'|'难点', evidence:string[]}>}
+ *   1~3 条，按证据强度排序；判不出来时给一条**诚实**的泛化知识点（低置信度）。
  */
 export function inferKnowledgePoints(text, subject) {
   const key = normalizeSubject(subject) || '数学'
-  const map = KNOWLEDGE_KEYWORD_MAP[key] ?? KNOWLEDGE_KEYWORD_MAP[key === '道法' ? '道法' : '数学']
+  const list = KNOWLEDGE_POINTS[key] ?? KNOWLEDGE_POINTS.数学
   const compact = String(text ?? '').replace(/\s+/g, '')
-  if (!compact.length || !map) return []
+  if (!compact.length || !list) return []
 
-  const out = []
-  for (const [name, words] of Object.entries(map)) {
-    if (words.some((w) => compact.includes(w))) {
-      out.push(name)
-      if (out.length >= 5) break
-    }
+  const scored = []
+  for (const kp of list) {
+    // 长词优先的贪心命中：「分数运算」不会被同时算成「分数运算」+「分数」
+    const hits = matchPhrases(compact, kp.words)
+    if (!hits.length) continue
+    const evidence = hits.map((h) => h.word)
+    // 专业术语（≥4 字）比单个通用词更能说明题型
+    const specific = hits.filter((h) => h.word.length >= 4).length
+    const score = evidence.length + specific * 0.9
+    // 只有一条弱证据时把握度 < 0.5 —— 前端会显示琥珀色警示（宁可说不准，也不硬编）
+    const confidence = Math.min(0.95, 0.36 + 0.12 * evidence.length + 0.08 * specific)
+    scored.push({
+      name: kp.name,
+      confidence: Math.round(confidence * 100) / 100,
+      level: kp.level,
+      evidence: evidence.slice(0, 4),
+      score,
+    })
   }
-  return out
+
+  // 判不出来就**不出现**：没有依据的知识点会被学生质疑「你凭什么说我错在这」
+  if (!scored.length) return []
+
+  scored.sort((a, b) => b.score - a.score || b.confidence - a.confidence)
+  return scored.slice(0, 3).map(({ score, ...rest }) => rest)
 }
 
 /* -------------------------------------------------------------------------- */
@@ -984,14 +1062,52 @@ export function extractAnswerHints(ocrLines = []) {
       const value = m[1].trim()
       if (value) {
         const isCorrect = /答案/.test(label)
-        hints.push({ value, line: text, kind: isCorrect ? 'correctAnswer' : 'myAnswer' })
+        hints.push({ value, line: text, kind: isCorrect ? 'correctAnswer' : 'myAnswer', confidence: 0.95, reason: `印刷标签「${label}」` })
       }
       continue
     }
-    // 整行只有一个选项字母
-    if (/^[A-Ha-h]$/.test(text)) hints.push({ value: text.toUpperCase(), line: text, kind: 'myAnswer' })
+    // 整行只有一个选项字母（多半是学生手写在题旁边的答案）
+    if (/^[A-Ha-h]$/.test(text)) {
+      hints.push({ value: text.toUpperCase(), line: text, kind: 'myAnswer', confidence: 0.7, reason: '独立成行的选项字母' })
+      continue
+    }
+    // 手写答案常带括号/点号：B / B. / (B) / B、
+    const solo = text.match(/^[（(【\[]?([A-Ha-h])[)）】\].、,，]?$/)
+    if (solo) {
+      hints.push({ value: solo[1].toUpperCase(), line: text, kind: 'myAnswer', confidence: 0.62, reason: '独立成行的手写答案' })
+      continue
+    }
+    // 「选B」「答：B」「我选 C」这类手写
+    const wrote = text.match(/^(?:我选|选了|选|答|填写)\s*[:：、]?\s*([A-Ha-h])\s*[.、。]?$/)
+    if (wrote) {
+      hints.push({ value: wrote[1].toUpperCase(), line: text, kind: 'myAnswer', confidence: 0.72, reason: '手写「选X」' })
+    }
   }
   return hints
+}
+
+/**
+ * 学生把答案**手写在题目末尾**时，OCR 往往把它并进题干最后一行。
+ * 只有当「行尾那个字母正好是某个选项的编号」时才敢认 —— 误判代价太大，宁可漏。
+ *
+ * @returns {{value:string, confidence:number, reason:string}|null}
+ */
+export function extractTrailingAnswerHint(lines = [], optionLetters = []) {
+  const legal = (optionLetters || []).map((c) => String(c).toUpperCase()).filter(Boolean)
+  if (!legal.length) return null
+  const texts = (lines || [])
+    .map((l) => String(l?.text ?? '').trim())
+    .filter(Boolean)
+  if (!texts.length) return null
+  const last = texts[texts.length - 1]
+  // 行尾形如 "……B" / "……(B)" / "…… B."
+  const m = last.match(/(?:^|[\s，,、（(\u3000])([A-Ha-h])(?:[).、．)）]|\s*)$/)
+  if (!m) return null
+  const letter = m[1].toUpperCase()
+  if (!legal.includes(letter)) return null
+  // 前面的内容太短 -> 更像是整行就是答案，交给 extractAnswerHints 处理
+  if (last.replace(m[0], '').trim().length < 2) return null
+  return { value: letter, confidence: 0.45, reason: '题干末尾疑似手写作答' }
 }
 
 /**
@@ -1176,6 +1292,18 @@ export function draftFromOcrLines(lines = [], ctx = {}) {
   const myHint = groups.answer.find((g) => g.kind === 'myAnswer')
   const corHint = groups.answer.find((g) => g.kind === 'correctAnswer')
 
+  // 学生把答案手写在题目末尾时，OCR 常常把它并进题干最后一行。
+  // 只有「行尾字母正好是某个选项编号」才敢认（把握度低，会提示用户确认）。
+  let answerSource = myHint ? { reason: myHint.reason ?? 'OCR 作答行', confidence: myHint.confidence ?? 0.7 } : null
+  if (!myHint && optionLetters.length) {
+    const trailing = extractTrailingAnswerHint(lines, optionLetters)
+    if (trailing) {
+      answerSource = { reason: trailing.reason, confidence: trailing.confidence }
+      warnings.push(`题干末尾疑似手写作答「${trailing.value}」（把握不大，请确认）`)
+    }
+  }
+  const myAnswerValue = myHint?.value ?? answerSource?.value ?? ''
+
   /* ---- 学科 / 题型 / 知识点：纯规则启发式（零 AI） ---- */
   // 契约：ctx.fallbackSubject 有值 == 用户**手动选过**学科 -> 优先于启发式
   const userSubject = normalizeSubject(ctx.userSubject || ctx.fallbackSubject)
@@ -1197,7 +1325,7 @@ export function draftFromOcrLines(lines = [], ctx = {}) {
   const inferredKps = inferKnowledgePoints(fullText, subject)
   const knowledgePoints = inferredKps.length
     ? inferredKps
-    : (Array.isArray(ctx.fallbackKnowledgePoints) ? ctx.fallbackKnowledgePoints : [])
+    : normalizeKnowledgePointList(ctx.fallbackKnowledgePoints)
 
   if (!userSubject) {
     if (!subjectInfer.subject) {
@@ -1222,7 +1350,7 @@ export function draftFromOcrLines(lines = [], ctx = {}) {
       knowledgePoints,
       stem,
       options,
-      myAnswer: myHint?.value ?? '',
+      myAnswer: myAnswerValue,
       correctAnswer: corHint?.value ?? '',
       difficulty: 3,
       ocrText: fullText,
@@ -1230,6 +1358,9 @@ export function draftFromOcrLines(lines = [], ctx = {}) {
       subjectConfidence,
       subjectEvidence,
       questionTypeConfidence: userQuestionType ? 1 : typeInfer.confidence,
+      /* 我的答案是怎么来的（手写/印刷/推断），前端可据此提示用户核对 */
+      myAnswerConfidence: answerSource?.confidence ?? 0,
+      myAnswerSource: answerSource?.reason ?? '',
     },
     optionLetters,
     warnings,
@@ -1355,12 +1486,10 @@ export function normalizeDraft(raw = {}, ctx = {}) {
   if (!answerLegal(myAnswer)) warnings.push('我的答案不在选项范围内')
   if (!answerLegal(correctAnswer)) warnings.push('正确答案不在选项范围内')
 
-  /* ---- 知识点 ---- */
-  let knowledgePoints = Array.isArray(r.knowledgePoints)
-    ? r.knowledgePoints.map((k) => String(k ?? '').trim()).filter(Boolean)
-    : []
+  /* ---- 知识点（统一成对象数组：{name, confidence, level, evidence?}）---- */
+  let knowledgePoints = normalizeKnowledgePointList(r.knowledgePoints)
   if (!knowledgePoints.length && Array.isArray(ctx.fallbackKnowledgePoints)) {
-    knowledgePoints = ctx.fallbackKnowledgePoints
+    knowledgePoints = normalizeKnowledgePointList(ctx.fallbackKnowledgePoints)
     warnings.push('模型未给出知识点，已回退为本地知识点推断')
   }
 

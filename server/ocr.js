@@ -171,7 +171,24 @@ function normalizeRect(box) {
  * @param {number} [p.timeoutMs]
  * @returns {Promise<{text: string, texts: string[], scores: number[], avgScore: number, lines: {text:string,score:number}[], engine: string}>}
  */
-export async function runLocalOcr({ baseUrl, imageBase64, timeoutMs = 15000 } = {}) {
+/**
+ * 本地 OCR 的超时上限。
+ *
+ * 实测（scripts/ocr-bench，NAS 上跑 CPU 版 RapidOCR）：
+ *   干净图 / 仿真手机照 / 真实分辨率 —— 1.3 ~ 1.7 秒
+ *   远距离小字（hard 档）           —— 11 ~ 15 秒（移动版模型）
+ *                                     25 ~ 35 秒（server 级模型，会自动降级重试）
+ *
+ * 原来写死 15 秒，**刚好卡在 hard 档的边缘** —— 拍得远一点就超时，
+ * 用户看到的却是「OCR 服务超时」，而不是「这张图太糊」。
+ * 60 秒能覆盖最坏情况；正常照片 1 秒多就返回了，不影响体感。
+ */
+export const OCR_TIMEOUT_MS = Math.max(
+  5000,
+  Number(process.env.OCR_TIMEOUT_MS ?? 60000) || 60000,
+)
+
+export async function runLocalOcr({ baseUrl, imageBase64, timeoutMs = OCR_TIMEOUT_MS } = {}) {
   const root = String(baseUrl ?? '').replace(/\/+$/, '')
   if (!root) throw new Error('未配置 OCR 服务地址')
   const bare = stripDataUrl(imageBase64)

@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url'
 import { readStoredAiConfig } from './settings.js'
 import { getPreset, guessProviderByBaseUrl, resolveVisionSupport } from './providers.js'
 import { callChat, sanitizeMessage, RED_PIXEL_DATA_URL } from './modelClient.js'
-import { runLocalOcr, probeOcrService } from './ocr.js'
+import { OCR_TIMEOUT_MS, runLocalOcr, probeOcrService } from './ocr.js'
 import {
   recognizeWithVision,
   recognizeFromOcrText,
@@ -1288,7 +1288,11 @@ export async function analyzePhoto(input = {}) {
         ocr = await runLocalOcr({
           baseUrl: cfg.ocrBaseUrl,
           imageBase64,
-          timeoutMs: Math.min(cfg.timeoutMs ?? 25000, 15000),
+          // ⚠️ 不要拿大模型的 timeoutMs 来卡 OCR —— 这是两回事：
+          //   大模型超时 25s 是为了别让用户干等；
+          //   本地 OCR 正常照片 1 秒多就返回，只有远距离小字才会到 11~35s。
+          // 原来卡在 15s，拍得远一点就直接超时，用户只看到「OCR 服务超时」。
+          timeoutMs: OCR_TIMEOUT_MS,
         })
       } catch (err) {
         warnings.push(`本地 OCR 服务调用失败：${shortError(err)}`)
