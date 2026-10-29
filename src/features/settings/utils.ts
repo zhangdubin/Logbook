@@ -19,6 +19,13 @@ export const TIMEOUT_MAX_SEC = 120
 /** 默认超时（秒） */
 export const DEFAULT_TIMEOUT_SEC = 30
 
+/** 最大输出长度（token）的取值范围。
+ *  下限 256：低于这个值连一句完整的话都说不完；
+ *  上限 32768：再大就该用分步/流式了，单次请求没必要。 */
+export const MAX_OUTPUT_TOKENS_MIN = 256
+export const MAX_OUTPUT_TOKENS_MAX = 32768
+export const DEFAULT_MAX_OUTPUT_TOKENS = 4096
+
 /** 把数字夹在区间内 */
 export function clampNumber(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
@@ -62,6 +69,11 @@ export function formFromSettings(settings: AISettings): SettingsForm {
     visionModel: settings.visionModel ?? '',
     temperature: clampNumber(settings.temperature ?? 0.2, TEMPERATURE_MIN, TEMPERATURE_MAX),
     timeoutSec: clampNumber(timeoutSec, TIMEOUT_MIN_SEC, TIMEOUT_MAX_SEC),
+    maxOutputTokens: clampNumber(
+      settings.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+      MAX_OUTPUT_TOKENS_MIN,
+      MAX_OUTPUT_TOKENS_MAX,
+    ),
     enableModel: Boolean(settings.enableModel),
     ocrBaseUrl: settings.ocrBaseUrl ?? '',
     ocrEnabled: Boolean(settings.ocrEnabled),
@@ -79,6 +91,11 @@ export function toSettingsInput(form: SettingsForm): AISettingsInput {
     visionModel: form.visionModel.trim(),
     temperature: clampNumber(form.temperature, TEMPERATURE_MIN, TEMPERATURE_MAX),
     timeoutMs: Math.round(clampNumber(form.timeoutSec, TIMEOUT_MIN_SEC, TIMEOUT_MAX_SEC) * 1000),
+    maxOutputTokens: clampNumber(
+      form.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+      MAX_OUTPUT_TOKENS_MIN,
+      MAX_OUTPUT_TOKENS_MAX,
+    ),
     enableModel: form.enableModel,
     ocrBaseUrl: form.ocrBaseUrl.trim(),
     ocrEnabled: form.ocrEnabled,

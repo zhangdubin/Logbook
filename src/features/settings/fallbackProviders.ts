@@ -105,6 +105,7 @@ export const DEFAULT_AI_SETTINGS: AISettings = {
   visionModel: '',
   temperature: 0.2,
   timeoutMs: 30_000,
+  maxOutputTokens: 4096,
   enableModel: false,
   ocrBaseUrl: '',
   ocrEnabled: false,

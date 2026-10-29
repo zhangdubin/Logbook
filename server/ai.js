@@ -892,6 +892,7 @@ export function resolveProviderConfig() {
         supportsVision,
         temperature: Number(stored.temperature ?? 0.3),
         timeoutMs: Number(stored.timeoutMs ?? 25000),
+        maxOutputTokens: Number(stored.maxOutputTokens ?? 4096),
         ocrBaseUrl,
         ocrEnabled,
       }
@@ -917,6 +918,7 @@ export function resolveProviderConfig() {
       supportsVision: resolveVisionSupport({ provider, model }),
       temperature: 0.3,
       timeoutMs: Number(process.env.AI_TIMEOUT_MS || 25000),
+      maxOutputTokens: Number(process.env.AI_MAX_OUTPUT_TOKENS || 4096),
       ocrBaseUrl,
       ocrEnabled,
     }
@@ -935,6 +937,7 @@ export function resolveProviderConfig() {
     supportsVision: false,
     temperature: 0.3,
     timeoutMs: 25000,
+    maxOutputTokens: 4096,
     ocrBaseUrl,
     ocrEnabled,
   }
@@ -2330,6 +2333,12 @@ export async function testAiConnection(input = {}) {
   const enableModel = pick('enableModel', saved?.enableModel ?? true) !== false
 
   const timeoutMs = Math.min(Number(pick('timeoutMs', saved?.timeoutMs ?? 15000)) || 15000, 15000)
+  // 连通性测试的输出预算：优先用「最大输出长度」设置，至少 1024。
+  // 推理模型会先思考，预算太小 content 会是空串 —— 这正是用户报的「模型返回内容为空」。
+  const maxOutputTokens = Math.max(
+    1024,
+    Number(pick('maxOutputTokens', saved?.maxOutputTokens ?? 4096)) || 4096,
+  )
   const cfg = {
     enabled: Boolean(apiKey),
     apiKey,
@@ -2340,6 +2349,7 @@ export async function testAiConnection(input = {}) {
     supportsVision: vision,
     temperature: Number(pick('temperature', saved?.temperature ?? 0)) || 0,
     timeoutMs,
+    maxOutputTokens,
   }
 
   // 本地 OCR 是独立信号源：即使没配大模型，也要单独做一次可达性测试
@@ -2396,7 +2406,7 @@ export async function testAiConnection(input = {}) {
   //
   // 之前用户报「配置大模型提示连接失败 / 模型返回内容为空」就是这个原因 ——
   // 他们的 Base URL、API Key、模型名都是对的，是我们的测试把预算给小了。
-  const TEST_BUDGET = 1024
+  const TEST_BUDGET = maxOutputTokens
   try {
     const content = await callChat({
       cfg,

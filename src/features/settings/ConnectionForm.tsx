@@ -9,6 +9,8 @@ import type { AIProviderPreset } from '@/lib/types'
 import { Badge, Field, ToggleRow } from '@/components/ui'
 import type { SettingsForm } from './types'
 import {
+  MAX_OUTPUT_TOKENS_MAX,
+  MAX_OUTPUT_TOKENS_MIN,
   TEMPERATURE_MAX,
   TEMPERATURE_MIN,
   TIMEOUT_MAX_SEC,
@@ -229,6 +231,31 @@ export function ConnectionForm({
             onChange={(e) =>
               onChange({
                 timeoutSec: clampNumber(Number(e.target.value), TIMEOUT_MIN_SEC, TIMEOUT_MAX_SEC),
+              })
+            }
+            disabled={disabled}
+          />
+        </Field>
+
+        <Field
+          label="最大输出长度（token）"
+          hint="推理模型（如 MiniMax M3.1）会先思考，思考内容也占这个预算；调太小会出现「模型返回内容为空」。"
+        >
+          <input
+            className="input"
+            type="number"
+            inputMode="numeric"
+            min={MAX_OUTPUT_TOKENS_MIN}
+            max={MAX_OUTPUT_TOKENS_MAX}
+            step={256}
+            value={form.maxOutputTokens}
+            onChange={(e) =>
+              onChange({
+                maxOutputTokens: clampNumber(
+                  Number(e.target.value),
+                  MAX_OUTPUT_TOKENS_MIN,
+                  MAX_OUTPUT_TOKENS_MAX,
+                ),
               })
             }
             disabled={disabled}

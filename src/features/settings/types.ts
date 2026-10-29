@@ -26,6 +26,8 @@ export interface SettingsForm {
   temperature: number
   /** 超时（秒） */
   timeoutSec: number
+  /** 最大输出长度（token） */
+  maxOutputTokens: number
   /** 是否启用大模型 */
   enableModel: boolean
   /** 本地 OCR 服务地址 */

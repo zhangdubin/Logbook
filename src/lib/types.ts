@@ -397,6 +397,12 @@ export interface AISettings {
   visionModel: string
   temperature: number
   timeoutMs: number
+  /**
+   * 最大输出长度（token）。
+   * 推理模型（会先思考）会先把这部分预算花在思考上，
+   * 给太小了最终答案会一个字都输出不出来（content 为空串）。
+   */
+  maxOutputTokens: number
   /** 是否启用大模型（关闭则完全走本地启发式引擎） */
   enableModel: boolean
   /** 本地 OCR 服务地址（PaddleOCR / RapidOCR 等），为空则不使用 */
@@ -417,6 +423,7 @@ export interface AISettingsInput {
   visionModel?: string
   temperature?: number
   timeoutMs?: number
+  maxOutputTokens?: number
   enableModel?: boolean
   ocrBaseUrl?: string
   ocrEnabled?: boolean

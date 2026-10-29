@@ -200,13 +200,23 @@ export async function callChat({
   const useTemp = Number.isFinite(Number(temperature)) ? Number(temperature) : Number(cfg.temperature ?? 0.3)
 
   /**
+   * 输出预算。
+   *
+   * 调用方没显式给就用配置里的「最大输出长度」——
+   * 这样**每一个**走 callChat 的地方（错题分析、拍照识别、连通性测试）
+   * 都受同一个旋钮控制，不用每个调用点都记得传一遍。
+   */
+  const budget = Number(maxTokens) > 0 ? Number(maxTokens) : Number(cfg.maxOutputTokens ?? 0)
+
+  /**
    * 发一次请求。
    *
    * @param {boolean} withJsonFormat  是否带 response_format=json_object
    * @param {number}  budget          本次给的输出预算（token）
    * @param {'auto'|'new'|'legacy'} tokenParam  用哪个参数名传预算
    */
-  const attempt = async (withJsonFormat, budget = maxTokens, tokenParam = 'auto') => {
+  const attempt = async (withJsonFormat, overrideBudget, tokenParam = 'auto') => {
+    const useBudget = Number(overrideBudget) > 0 ? Number(overrideBudget) : budget
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
@@ -224,9 +234,9 @@ export async function callChat({
       // 预算给小了会被思考过程吃光，content 变成空串。
       // 所以：默认发 max_completion_tokens；被拒（400 点了这个参数名）再退回 max_tokens。
       // （不要两个一起发：有的网关会因多余参数直接 400。）
-      if (budget) {
-        if (tokenParam === 'legacy') body.max_tokens = budget
-        else body.max_completion_tokens = budget
+      if (useBudget) {
+        if (tokenParam === 'legacy') body.max_tokens = useBudget
+        else body.max_completion_tokens = useBudget
       }
       if (withJsonFormat) body.response_format = { type: 'json_object' }
 
@@ -288,7 +298,7 @@ export async function callChat({
         const err = new Error(
           budgetEaten
             ? `模型输出预算被推理过程用完了` +
-              `${finish === 'length' ? `（finish_reason=length，最多 ${budget ?? '?'} token）` : ''}。` +
+              `${finish === 'length' ? `（finish_reason=length，最多 ${useBudget ?? '?'} token）` : ''}。` +
               `请调大「最大输出长度」，或换一个不思考的模型。`
             : '模型返回内容为空（可能是内容被安全策略拦截，或该模型不支持这种请求）',
         )
@@ -296,7 +306,7 @@ export async function callChat({
         err.emptyContent = true
         err.finishReason = finish
         err.hadReasoning = hadReasoning
-        err.budget = budget
+        err.budget = useBudget
         // 敏感内容拦截：MiniMax 会给 input_sensitive / output_sensitive 标记
         const sensitive =
           data?.input_sensitive === true ||
@@ -380,7 +390,7 @@ export async function callChat({
       // o 系列只认 max_completion_tokens
       const fallbackParam = mentionsNew ? 'legacy' : 'new'
       try {
-        return await attempt(json, maxTokens, fallbackParam)
+        return await attempt(json, budget, fallbackParam)
       } catch (err2) {
         if (err2?.emptyContent && (err2?.finishReason === 'length' || err2?.hadReasoning)) {
           return await attempt(

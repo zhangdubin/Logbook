@@ -24,6 +24,10 @@ export const DEFAULT_AI_SETTINGS = {
   visionModel: '',
   temperature: 0.3,
   timeoutMs: 25000,
+  // 最大输出长度（token）。
+  // 推理模型（会先思考）会把预算先花在思考上，预算太小 content 会是空串 ——
+  // 2026-10 用户报「模型返回内容为空」就是这个原因。
+  maxOutputTokens: 4096,
   enableModel: true,
   ocrBaseUrl: '',
   ocrEnabled: false,
@@ -164,6 +168,13 @@ export function validateAiInput(input = {}) {
     else value.timeoutMs = Math.round(t)
   }
 
+  if (input.maxOutputTokens !== undefined) {
+    const t = Number(input.maxOutputTokens)
+    if (!Number.isFinite(t) || t < 256 || t > 32768)
+      errors.push('maxOutputTokens 必须在 256 ~ 32768 token 之间')
+    else value.maxOutputTokens = Math.round(t)
+  }
+
   if (input.enableModel !== undefined) value.enableModel = Boolean(input.enableModel)
 
   if (input.ocrBaseUrl !== undefined) {
@@ -248,6 +259,8 @@ export function saveAiSettings(input = {}) {
     visionModel,
     temperature: value.temperature ?? existing?.temperature ?? DEFAULT_AI_SETTINGS.temperature,
     timeoutMs: value.timeoutMs ?? existing?.timeoutMs ?? DEFAULT_AI_SETTINGS.timeoutMs,
+    maxOutputTokens:
+      value.maxOutputTokens ?? existing?.maxOutputTokens ?? DEFAULT_AI_SETTINGS.maxOutputTokens,
     enableModel:
       value.enableModel !== undefined
         ? value.enableModel
@@ -294,6 +307,7 @@ export function toPublicSettings(raw) {
     visionModel: String(s.visionModel ?? ''),
     temperature: Number(s.temperature ?? DEFAULT_AI_SETTINGS.temperature),
     timeoutMs: Number(s.timeoutMs ?? DEFAULT_AI_SETTINGS.timeoutMs),
+    maxOutputTokens: Number(s.maxOutputTokens ?? DEFAULT_AI_SETTINGS.maxOutputTokens),
     enableModel: s.enableModel !== false,
     ocrBaseUrl: String(s.ocrBaseUrl ?? ''),
     ocrEnabled: Boolean(s.ocrEnabled),
