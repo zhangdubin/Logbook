@@ -421,6 +421,7 @@ const KNOWLEDGE_POINTS = {
   数学: [
     { name: '速度与时间问题', level: '进阶', words: ['相遇', '相向而行', '同向', '追及', '追上', '速度', '路程', '每小时', '行驶', '同时出发', '几小时后', '相距'] },
     { name: '面积与周长', level: '进阶', words: ['面积', '周长', '长方形', '正方形', '三角形', '梯形', '平行四边形', '圆', '扇形', '平方厘米', '平方米'] },
+    { name: '图形的运动与变换', level: '进阶', words: ['轴对称', '对称轴', '平移', '旋转', '旋转中心', '对折', '折痕', '翻折', '完全重合', '图形的变换'] },
     { name: '立体图形体积与表面积', level: '进阶', words: ['体积', '表面积', '容积', '正方体', '长方体', '圆柱', '圆锥', '立方米', '升'] },
     { name: '分数运算', level: '进阶', words: ['分数', '分子', '分母', '约分', '通分', '最简分数', '真分数', '假分数', '同分母', '异分母'] },
     { name: '百分数与折扣', level: '进阶', words: ['百分数', '百分比', '折扣', '打折', '成数', '利率', '利息', '增长率', '百分之'] },
@@ -460,8 +461,8 @@ const KNOWLEDGE_POINTS = {
     { name: '说明方法与课文理解', level: '进阶', words: ['说明方法', '列数字', '作比较', '举例子', '打比方', '分类别'] },
   ],
   英语: [
-    { name: '语法与时态', level: '进阶', words: ['时态', '一般现在时', '一般过去时', '现在完成时', '过去完成时', '一般将来时', '进行时', '第三人称单数', '注意时态'] },
-    { name: '完形填空技巧', level: '进阶', words: ['完形填空', '完形', '选词填空', '首字母填空', '语境'] },
+    { name: '语法与时态', level: '进阶', words: ['时态', '一般现在时', '一般过去时', '现在完成时', '过去完成时', '一般将来时', '进行时', '第三人称单数', '注意时态', 'the correct tense', 'tense form'] },
+    { name: '完形填空技巧', level: '进阶', words: ['完形填空', '完形', '选词填空', '首字母填空', '语境', 'complete the passage', 'best word', 'choose the best word', 'fill in the blanks with'] },
     { name: '英语阅读技巧', level: '进阶', words: ['阅读理解', '短文理解', '细节理解', '主旨大意', 'the passage', 'best answer'] },
     { name: '词汇与短语', level: '基础', words: ['单词', '词汇', '短语', '固定搭配', '词汇量', '单词拼写'] },
     { name: '句型转换', level: '进阶', words: ['句型转换', '同义句', '否定句', '一般疑问句', '特殊疑问句', 'there be', '改写'] },
@@ -1043,13 +1044,26 @@ export function normalizeKnowledgePointList(list) {
 export function inferKnowledgePoints(text, subject) {
   const key = normalizeSubject(subject) || '数学'
   const list = KNOWLEDGE_POINTS[key] ?? KNOWLEDGE_POINTS.数学
-  const compact = String(text ?? '').replace(/\s+/g, '')
+  const raw = String(text ?? '')
+  const compact = raw.replace(/\s+/g, '')
   if (!compact.length || !list) return []
+
+  // 英文题干的提示词（choose the best word / fill in the blanks）带空格，
+  // 而 compact 把空格去掉了会匹配不上 —— 所以再拿一份「保留空格的小写原文」一起匹配。
+  const lowerRaw = raw.toLowerCase()
 
   const scored = []
   for (const kp of list) {
     // 长词优先的贪心命中：「分数运算」不会被同时算成「分数运算」+「分数」
     const hits = matchPhrases(compact, kp.words)
+    const seen = new Set(hits.map((h) => h.word))
+    if (lowerRaw !== compact) {
+      for (const h of matchPhrases(lowerRaw, kp.words)) {
+        if (seen.has(h.word)) continue
+        seen.add(h.word)
+        hits.push(h)
+      }
+    }
     if (!hits.length) continue
     const evidence = hits.map((h) => h.word)
     // 专业术语（≥4 字）比单个通用词更能说明题型
