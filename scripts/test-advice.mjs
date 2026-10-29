@@ -100,6 +100,58 @@ console.log('\n\x1b[1m二、建议必须落到这道题自己的数字上\x1b[0m
 }
 
 /* ======================================================================== */
+console.log('\n\x1b[1m二之二、立体图形（体积/表面积）不能被当成面积题\x1b[0m')
+
+{
+  // 「表面积」里有「面积」两个字。正则里 `|` 优先级最低，
+  // 否定环视只管第一个分支 —— 不小心就会把体积题判成面积题，
+  // 然后拿面积公式去讲体积题。
+  const box = '一个长方体长5厘米，宽3厘米，高4厘米，体积是多少立方厘米？'
+  const r1 = localAnalyze({ subject: '数学', stem: box, myAnswer: '40', correctAnswer: '60', grade: '初一', difficulty: 3 })
+  const all1 = [...r1.correctSteps.map((s) => s.detail), ...r1.tips].join('\n')
+  check('长方体体积题认出「立体图形体积与表面积」',
+    r1.knowledgePoints.some((k) => /立体图形/.test(k.name)), JSON.stringify(r1.knowledgePoints.map((k) => k.name)))
+  check('算出了体积 5 × 3 × 4 = 60', /5\s*×\s*3\s*×\s*4\s*=\s*60/.test(all1), (all1.match(/5\s*×[^，。\n]*/) ?? [''])[0])
+  check('体积单位是「立方厘米」', all1.includes('60 立方厘米'))
+
+  const cube = '一个正方体的棱长是2分米，它的表面积是多少平方分米？'
+  const r2 = localAnalyze({ subject: '数学', stem: cube, myAnswer: '20', correctAnswer: '24', grade: '初一', difficulty: 3 })
+  const all2 = [...r2.correctSteps.map((s) => s.detail), ...r2.tips].join('\n')
+  check('正方体表面积题也走立体图形模型',
+    r2.knowledgePoints.some((k) => /立体图形/.test(k.name)), JSON.stringify(r2.knowledgePoints.map((k) => k.name)))
+  check('算出了表面积 6 × 2² = 24', /6\s*×\s*2/.test(all2) && /24/.test(all2), (all2.match(/6\s*×[^，。\n]*/) ?? [''])[0])
+
+  // 反向：平面面积题**不能**被立体图形抢走
+  const flat = '一个长方形长8米，宽5米，面积是多少平方米？'
+  const r3 = localAnalyze({ subject: '数学', stem: flat, myAnswer: '40', correctAnswer: '40平方米', grade: '初一', difficulty: 3 })
+  // 注意：知识点名可能来自 OCR 启发式（"面积与周长"），
+  // 也可能来自模型（"几何面积与周长"）—— 两者按别名去重，只会留一个。
+  check('平面面积题仍走平面几何模型',
+    r3.knowledgePoints.some((k) => /面积与周长/.test(k.name))
+    && !r3.knowledgePoints.some((k) => /立体图形/.test(k.name)),
+    JSON.stringify(r3.knowledgePoints.map((k) => k.name)))
+}
+
+/* ======================================================================== */
+console.log('\n\x1b[1m二之三、知识点是对象数组时不能被过滤掉\x1b[0m')
+
+{
+  // AI 分析结果里的 knowledgePoints 是**对象数组**（{name, confidence, level}）。
+  // 之前 inferKnowledgePoints 只留字符串，对象数组会被整个过滤掉 ——
+  // 模型识别出来的知识点全丢了。
+  const stem = '甲乙两地相距300千米，两车相向而行，速度分别是60和40千米每小时，几小时相遇？'
+  const r = localAnalyze({
+    subject: '数学',
+    stem,
+    knowledgePoints: [{ name: '相遇问题', confidence: 0.91, level: '难点' }],
+    myAnswer: '2', correctAnswer: '3', grade: '初一', difficulty: 3,
+  })
+  check('对象数组形式的知识点被保留', r.knowledgePoints.some((k) => /相遇/.test(k.name)),
+    JSON.stringify(r.knowledgePoints.map((k) => k.name)))
+  check('没有出现 [object Object]', !JSON.stringify(r).includes('[object Object]'))
+}
+
+/* ======================================================================== */
 console.log('\n\x1b[1m三、答案一致时不能把错因说得那么肯定\x1b[0m')
 
 {

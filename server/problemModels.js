@@ -75,8 +75,10 @@ export function extractQuantities(text) {
     const before = src.slice(Math.max(0, m.index - 12), m.index)
     let label = 'other'
     if (/每小时|每分钟|速度|时速|走了|行了|跑|开/.test(before)) label = 'speed'
-    else if (/相距|距离|路程|全长|长是|宽是|高是|边长/.test(before)) label = 'distance'
-    else if (/相距|相隔/.test(before)) label = 'distance'
+    // 立体图形的尺寸：长/宽/高/厚/棱长/半径/直径
+    // 「高速」要排除掉 —— 那是速度不是高度
+    else if (/(?:长|宽|高|厚|棱长|半径|直径)(?![速度])/.test(before)) label = 'dimension'
+    else if (/相距|距离|路程|全长|边长/.test(before)) label = 'distance'
     else if (/时间|用了|花费|经过|后|之内|分钟|小时/.test(before)) label = 'time'
     else if (/价格|售价|成本|买|卖|花了|元/.test(before)) label = 'money'
     else if (/重|质量|称/.test(before)) label = 'mass'
@@ -130,6 +132,7 @@ const MODEL_ALIASES = {
   chicken_rabbit: ['鸡兔', '假设'],
   tree: ['植树', '间隔'],
   geometry: ['面积', '周长', '几何', '长方形', '正方形', '三角形', '梯形', '圆'],
+  solid: ['体积', '表面积', '立体'],
   fraction: ['分数', '百分'],
   sum_diff: ['和差', '和倍', '差倍'],
   ratio: ['比', '比例'],
@@ -260,13 +263,46 @@ export const PROBLEM_MODELS = {
     key: 'geometry',
     name: '几何面积与周长',
     subject: '数学',
-    match: [/长方形|正方形|三角形|梯形|平行四边形|圆|周长|面积/],
+    // ⚠️ 「体积」「表面积」**故意不含进来** ——
+    //   「立体图形体积与表面积」里有「面积」两个字，混进来会把
+    //   体积题判成面积题，然后拿面积公式去讲体积题。
+    //   体积/表面积由 solid（立体图形）模型接。
+    //
+    // ⚠️⚠️ 注意**正则里 `|` 的优先级最低**：
+    //   /(?<!表)面积|正方形|圆/  实际是  (?<!表)面积  或  正方形  或  圆
+    //   —— 否定环视**只作用于第一个分支**，后两个分支照样能命中。
+    //   所以每个需要排除的分支都要**各自带上**环视，
+    //   不能把环视写在整条正则的最前面就以为全管住了。
+    match: [
+      // 「表面积」不算平面面积
+      /(?<!表)面积/,
+      // 「圆柱」「圆锥」是立体图形，不是平面上的圆
+      /(?<!立)圆(?![柱锥])/,
+      /长方形|正方形|三角形|梯形|平行四边形/,
+      /周长/,
+    ],
     formula: '长方形 S=ab，C=2(a+b)；三角形 S=ah÷2；圆 S=πr²，C=2πr',
     think: '先分清题目求的是「面积」还是「周长」—— 公式完全不同。面积题要找到对应的底和高。',
     pitfalls: [
       '周长和面积用混了公式',
       '三角形/梯形忘记除以 2',
       '底和高不对应（用了斜边）',
+    ],
+  },
+  solid: {
+    key: 'solid',
+    name: '立体图形体积与表面积',
+    subject: '数学',
+    match: [/体积|表面积|立方|长方体|正方体|圆柱|圆锥|球体|正方体/],
+    formula:
+      '长方体 V=abc、S=2(ab+bc+ac)；正方体 V=a³、S=6a²；圆柱 V=πr²h、S=2πr²+2πrh；圆锥 V=⅓πr²h',
+    think:
+      '先分清求的是「体积」还是「表面积」，再看是什么立体图形。体积是「占多少空间」，表面积是「外面一共多少皮」—— 公式完全不同，千万别混。',
+    pitfalls: [
+      '体积公式和表面积公式用混了',
+      '正方体表面积忘了乘 6（6 个面）',
+      '圆柱底面积算成了 2πr（周长）而不是 πr²',
+      '单位没换算：体积用立方单位、表面积用平方单位',
     ],
   },
   fraction: {
@@ -584,8 +620,11 @@ export function buildWorkedSteps(model, text) {
       break
     }
     case 'geometry': {
-      const a = distances[0]
-      const b = distances[1]
+      // 尺寸优先用 dimension（长/宽/高/棱长），没有再退回 distance
+      const dimQs = q.filter((x) => x.label === 'dimension')
+      const geomQs = dimQs.length ? dimQs : distances
+      const a = geomQs[0]
+      const b = geomQs[1]
       steps.push({
         title: '先分清求的是面积还是周长',
         detail: `${model.think}`,
@@ -599,6 +638,66 @@ export function buildWorkedSteps(model, text) {
           title: '代入公式',
           detail: `长 = ${num(a.value)} ${u}、宽 = ${num(b.value)} ${u} → 面积 = ${num(a.value)} × ${num(b.value)} = ${s} ${areaUnit(u)}；周长 = 2 × (${num(a.value)} + ${num(b.value)}) = ${c} ${u}`,
         })
+      }
+      break
+    }
+    case 'solid': {
+      // 尺寸优先用 dimension（长/宽/高/棱长/半径），
+      // 没有就退回 distance（题干没写"长"字，只给了数字）
+      const dimQs = q.filter((x) => x.label === 'dimension')
+      const dims = (dimQs.length ? dimQs : distances).slice(0, 3)
+      steps.push({
+        title: '先分清求的是体积还是表面积',
+        detail: `${model.think}`,
+      })
+      const wantVolume = /体积/.test(text ?? '')
+      const wantSurface = /表面积|表面积/.test(text ?? '')
+      // 识别立体图形种类
+      let shape = ''
+      if (/正方体|立方体/.test(text ?? '')) shape = '正方体'
+      else if (/长方体/.test(text ?? '')) shape = '长方体'
+      else if (/圆柱/.test(text ?? '')) shape = '圆柱'
+      else if (/圆锥/.test(text ?? '')) shape = '圆锥'
+      else if (/球/.test(text ?? '')) shape = '球'
+      if (shape) {
+        steps.push({
+          title: `认出是${shape}`,
+          detail: `${shape}的${
+            wantVolume && !wantSurface
+              ? '体积公式'
+              : wantSurface && !wantVolume
+                ? '表面积公式'
+                : '体积与表面积公式'
+          }：${model.formula}`,
+        })
+      }
+      // 能算出就直接算（正方体只要 1 个尺寸，长方体要 3 个）
+      if (dims.length >= 1) {
+        const u = lenUnit(dims[0].unit ?? '米')
+        const cu = `立方${u}`
+        const [a, b, c] = dims
+        if (shape === '正方体' && a) {
+          const v = num(a.value ** 3)
+          const sArea = num(6 * a.value ** 2)
+          computed = `体积 = ${num(a.value)}³ = ${v} ${cu}；表面积 = 6 × ${num(a.value)}² = ${sArea} 平方${u}`
+          steps.push({
+            title: '代入公式',
+            detail: `棱长 = ${num(a.value)} ${u} → 体积 = ${num(a.value)} × ${num(a.value)} × ${num(a.value)} = ${v} ${cu}；表面积 = 6 × ${num(a.value)} × ${num(a.value)} = ${sArea} 平方${u}`,
+          })
+        } else if (shape === '长方体' && a && b && c) {
+          const v = num(a.value * b.value * c.value)
+          const sArea = num(2 * (a.value * b.value + b.value * c.value + a.value * c.value))
+          computed = `体积 = ${num(a.value)} × ${num(b.value)} × ${num(c.value)} = ${v} ${cu}；表面积 = 2 × (${num(a.value)}×${num(b.value)} + ${num(b.value)}×${num(c.value)} + ${num(a.value)}×${num(c.value)}) = ${sArea} 平方${u}`
+          steps.push({
+            title: '代入公式',
+            detail: `长 = ${num(a.value)} ${u}、宽 = ${num(b.value)} ${u}、高 = ${num(c.value)} ${u} → 体积 = ${v} ${cu}；表面积 = ${sArea} 平方${u}`,
+          })
+        } else if (a && b) {
+          steps.push({
+            title: '代入公式',
+            detail: `识别到的尺寸：${dims.map((d) => `${num(d.value)} ${d.unit ?? ''}`).join('、')} → ${model.formula}`,
+          })
+        }
       }
       break
     }

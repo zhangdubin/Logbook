@@ -540,8 +540,15 @@ function inferQuestionType(input) {
 function inferKnowledgePoints(input) {
   const subject = inferSubject(input)
   const stem = String(input.stem ?? '')
+  // 知识点有两种形态：
+  //   字符串数组 —— 题目表里存的（'分数应用题'）
+  //   对象数组   —— AI 分析结果里的（{name, confidence, level, evidence}）
+  // 之前这里只留字符串，**对象数组会被整个过滤掉** —— 模型识别出来的知识点全丢了。
   const provided = Array.isArray(input.knowledgePoints)
-    ? input.knowledgePoints.filter((k) => k && typeof k === 'string')
+    ? input.knowledgePoints
+        .map((k) => (typeof k === 'string' ? k : k?.name))
+        .map((n) => String(n ?? '').trim())
+        .filter(Boolean)
     : []
 
   const out = []
@@ -1128,7 +1135,10 @@ export async function analyzeQuestion(input = {}) {
     subject: local.subject,
     grade: input.grade ?? '',
     questionType: local.questionType,
-    knowledgePoints: (input.knowledgePoints ?? []).join('、'),
+    knowledgePoints: (Array.isArray(input.knowledgePoints) ? input.knowledgePoints : [])
+      .map((k) => (typeof k === 'string' ? k : k?.name))
+      .filter(Boolean)
+      .join('、'),
     stem: String(input.stem ?? '').slice(0, 3000),
     options: Array.isArray(input.options) ? input.options.join(' | ').slice(0, 500) : '',
     myAnswer: String(input.myAnswer ?? '').slice(0, 300),
