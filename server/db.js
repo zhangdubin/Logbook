@@ -332,6 +332,40 @@ export function mapImage(img) {
   }
 }
 
+/**
+ * 知识点一律归一化成**字符串数组**。
+ *
+ * 历史包袱：有一段时间后端把 draft.knowledgePoints 改成了对象数组
+ * （{name, confidence, level, evidence}），前端又把它原样存了回来，
+ * 于是 knowledge_points 列里存的是对象数组。
+ * 那样的话前端把它当 React 子节点渲染会抛 error #31，
+ * 而且 json_each 做的知识点搜索也对不上。
+ *
+ * 所以**读和写都归一化**：写的时候拦住新的坏数据，
+ * 读的时候把历史坏数据就地修正（不必等用户手动跑清洗脚本）。
+ */
+export function normalizeKnowledgePoints(list) {
+  if (!Array.isArray(list)) return []
+  const out = []
+  const seen = new Set()
+  for (const kp of list) {
+    let name = ''
+    if (typeof kp === 'string') name = kp.trim()
+    else if (kp && typeof kp === 'object') {
+      const n = kp.name
+      if (typeof n === 'string') name = n.trim()
+      else if (n && typeof n === 'object') {
+        const deep = n.name
+        if (typeof deep === 'string') name = deep.trim()
+      }
+    }
+    if (!name || seen.has(name)) continue
+    seen.add(name)
+    out.push(name)
+  }
+  return out
+}
+
 export function mapQuestion(row, studentName) {
   if (!row) return null
   const kp = parseJSON(row.knowledge_points, [])
@@ -347,7 +381,7 @@ export function mapQuestion(row, studentName) {
     subject: row.subject,
     grade: row.grade ?? '',
     semester: row.semester ?? '',
-    knowledgePoints: Array.isArray(kp) ? kp : [],
+    knowledgePoints: normalizeKnowledgePoints(kp),
     questionType: row.question_type,
     source: row.source ?? '',
     stem: row.stem ?? '',
@@ -532,7 +566,10 @@ export function knowledgePointRefs(subject) {
         ORDER BY count DESC, name ASC`,
     )
     .all(...(subject ? [subject] : []))
-  return rows.map((r) => ({ name: r.name, subject: r.subject, count: Number(r.count) }))
+  /* je.value 在历史坏数据里可能是整个 JSON 对象文本，这里统一取名字 */
+  return rows
+    .map((r) => ({ name: normalizeKnowledgePoints([r.name])[0] ?? '', subject: r.subject, count: Number(r.count) }))
+    .filter((r) => r.name)
 }
 
 export default db

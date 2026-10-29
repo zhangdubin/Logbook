@@ -416,6 +416,14 @@ export interface AISettings {
   hasApiKey: boolean
   /** 实际生效的引擎描述 */
   activeEngine?: string
+  /**
+   * 实际生效的引擎类型（结构化）。
+   *
+   * 不要靠解析 activeEngine 文案来判断 —— 走大模型时文案里也带
+   * 「+ 本地 OCR 服务」，用 /本地/ 匹配会把「已启用」误判成「本地引擎」。
+   * 字段缺失时按老逻辑兜底。
+   */
+  activeEngineKind?: 'model' | 'local'
   updatedAt?: string
 }
 

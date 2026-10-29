@@ -973,6 +973,23 @@ export function describeActiveEngine(cfg = resolveProviderConfig()) {
   return `${cfg.model}@${cfg.providerName}${vision}${ocr}`
 }
 
+/**
+ * 当前引擎的**结构化**判定。
+ *
+ * 为什么需要它：`describeActiveEngine()` 的文案是复合句，
+ * 走大模型时也会带「+ 本地 OCR 服务」——
+ * 前端若用 /本地/ 这类关键词去猜引擎类型，
+ * 会把「已启用大模型」误判成「本地引擎」，
+ * 于是显示错误的徽章，还弹一条「没有可用密钥」的假警告。
+ *
+ * 所以引擎类型必须由后端明确给出，不能让前端解析文案。
+ *
+ * @returns {'model' | 'local'}
+ */
+export function describeActiveEngineKind(cfg = resolveProviderConfig()) {
+  return cfg?.enabled ? 'model' : 'local'
+}
+
 /** 简短引擎标识（/api/health 用） */
 export function describeEngineCode(cfg = resolveProviderConfig()) {
   const base = cfg?.enabled

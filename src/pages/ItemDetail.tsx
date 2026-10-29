@@ -14,6 +14,7 @@ import { DIFFICULTY_LABEL, SUBJECT_BG, formatDateTime, nextReviewDate } from '@/
 import { AlertBox, Badge, Card, Modal, Progress, Spinner } from '@/components/ui'
 import { useToast } from '@/store/toast'
 import { AnalysisPanel } from './entry/AnalysisPanel'
+import { kpNames } from './entry/kpShape'
 import { ModeBanner } from './entry/ModeBanner'
 import { dataClient } from './entry/client'
 
@@ -265,8 +266,8 @@ export default function ItemDetail() {
                 <div>
                   <p className="label">知识点</p>
                   <div className="flex flex-wrap gap-1.5">
-                    {q.knowledgePoints.length ? (
-                      q.knowledgePoints.map((kp) => (
+                    {kpNames(q.knowledgePoints).length ? (
+                      kpNames(q.knowledgePoints).map((kp) => (
                         <span key={kp} className="tag bg-brand-50 text-brand-700 ring-1 ring-brand-200">
                           {kp}
                         </span>

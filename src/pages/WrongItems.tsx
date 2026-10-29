@@ -19,6 +19,7 @@ import { DIFFICULTY_LABEL, SUBJECT_BG, formatDate, shortText } from '@/lib/forma
 import { AlertBox, Badge, Card, EmptyState, Field, Modal, Progress, Skeleton } from '@/components/ui'
 import { useToast } from '@/store/toast'
 import { ModeBanner } from './entry/ModeBanner'
+import { kpNames } from './entry/kpShape'
 import { dataClient } from './entry/client'
 import { useMediaQuery, useStudents } from './entry/hooks'
 
@@ -512,16 +513,16 @@ export default function WrongItems() {
                         {shortText(q.stem, 70) || '（未填写题干）'}
                       </p>
 
-                      {q.knowledgePoints.length > 0 && (
+                      {kpNames(q.knowledgePoints).length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1">
-                          {q.knowledgePoints.slice(0, 3).map((kp) => (
+                          {kpNames(q.knowledgePoints).slice(0, 3).map((kp) => (
                             <span key={kp} className="tag bg-ink-50 text-ink-600 ring-1 ring-ink-200">
                               {kp}
                             </span>
                           ))}
-                          {q.knowledgePoints.length > 3 && (
+                          {kpNames(q.knowledgePoints).length > 3 && (
                             <span className="tag bg-ink-50 text-ink-400 ring-1 ring-ink-200">
-                              +{q.knowledgePoints.length - 3}
+                              +{kpNames(q.knowledgePoints).length - 3}
                             </span>
                           )}
                         </div>

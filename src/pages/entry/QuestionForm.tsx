@@ -10,6 +10,7 @@
  */
 
 import { ERROR_TYPE_DESC, ERROR_TYPES, ERROR_TYPE_LABEL, QUESTION_TYPES, SUBJECTS } from '@/lib/types'
+import { safeText } from './kpShape'
 import type { Difficulty, ErrorType, QuestionType, Subject } from '@/lib/types'
 import { DIFFICULTY_LABEL } from '@/lib/format'
 import { Field } from '@/components/ui'
@@ -258,7 +259,10 @@ export function QuestionForm({
         hint={errors.options ?? '选择题请填写选项编号与内容，例如 A. 12'}
       >
         <div className="space-y-2">
-          {value.options.map((opt, idx) => (
+          {/* 选项也可能是对象（存量数据形状漂移），统一取文本，绝不把对象交给 input */}
+          {value.options.map((rawOpt, idx) => {
+            const opt = safeText(rawOpt)
+            return (
             <div key={idx} className="flex items-center gap-2">
               <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-ink-100 text-xs font-bold text-ink-600">
                 {OPTION_LETTERS[idx] ?? idx + 1}
@@ -278,8 +282,9 @@ export function QuestionForm({
               >
                 ✕
               </button>
-            </div>
-          ))}
+              </div>
+            )
+          })}
           {optionsVisible ? (
             <div className="flex items-center gap-2">
               <button type="button" className="btn btn-outline btn-sm" onClick={addOption}>

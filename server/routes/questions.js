@@ -22,6 +22,7 @@ import {
   parseJSON,
   attachUploadToStudent,
   extractUploadFilename,
+  normalizeKnowledgePoints,
 } from '../db.js'
 import { analyzeQuestion } from '../ai.js'
 import { canAccessStudent, forbidden, requirePermission, scopeFor } from '../auth.js'
@@ -123,7 +124,8 @@ router.post('/', requirePermission('questions:create'), (req, res) => {
   }
 
   const now = nowISO()
-  const knowledgePoints = Array.isArray(body.knowledgePoints) ? body.knowledgePoints : []
+  // 知识点一律存字符串数组（历史上存过对象数组，会让前端渲染崩溃、搜索失效）
+  const knowledgePoints = normalizeKnowledgePoints(body.knowledgePoints)
   const options = Array.isArray(body.options) ? body.options : []
   const images = Array.isArray(body.images) ? body.images : []
   const tags = Array.isArray(body.tags) ? body.tags : []
@@ -202,7 +204,7 @@ router.patch('/:id', requirePermission('questions:update'), (req, res) => {
   if (body.grade !== undefined) setIf('grade', String(body.grade))
   if (body.semester !== undefined) setIf('semester', bindable(body.semester))
   if (body.knowledgePoints !== undefined) {
-    setIf('knowledge_points', JSON.stringify(Array.isArray(body.knowledgePoints) ? body.knowledgePoints : []))
+    setIf('knowledge_points', JSON.stringify(normalizeKnowledgePoints(body.knowledgePoints)))
   }
   if (body.questionType !== undefined) setIf('question_type', String(body.questionType))
   if (body.source !== undefined) setIf('source', bindable(body.source))
@@ -318,13 +320,13 @@ router.post('/:id/analyze', requirePermission('questions:update'), async (req, r
   })
 
   // 把分析结论回写到错题（知识点 / 错因 / 错因说明）
-  const kps = analysis.knowledgePoints?.map((k) => k.name).filter(Boolean) ?? []
+  const kps = normalizeKnowledgePoints(analysis.knowledgePoints ?? [])
   db.prepare(
     `UPDATE questions
         SET knowledge_points = ?, error_type = ?, error_detail = ?, ai_analysis = ?, updated_at = ?
       WHERE id = ?`,
   ).run(
-    JSON.stringify(kps.length ? kps : q.knowledgePoints),
+    JSON.stringify(kps.length ? kps : normalizeKnowledgePoints(q.knowledgePoints)),
     analysis.diagnosis?.type ?? q.errorType,
     analysis.diagnosis?.reason ?? q.errorDetail,
     JSON.stringify(analysis),

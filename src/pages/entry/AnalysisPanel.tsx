@@ -9,6 +9,7 @@ import { ERROR_TYPE_COLOR, ERROR_TYPE_LABEL } from '@/lib/types'
 import type { AIAnalysis, PhotoAnalysisResponse } from '@/lib/types'
 import { AlertBox, Badge, Progress, Spinner } from '@/components/ui'
 import type { ReactNode } from 'react'
+import { asArray, kpName, safeText, safeTexts } from './kpShape'
 
 function ConfidencePill({ value }: { value: number }) {
   const pct = Math.round(Math.min(1, Math.max(0, value)) * 100)
@@ -90,8 +91,8 @@ export function AnalysisPanel({
     )
   }
 
-  const diagnosis = analysis.diagnosis
-  const color = ERROR_TYPE_COLOR[diagnosis.type] ?? '#3b63f6'
+  const diagnosis = (analysis.diagnosis ?? {}) as AIAnalysis['diagnosis']
+  const color = ERROR_TYPE_COLOR[diagnosis?.type] ?? '#3b63f6'
 
   return (
     <div className="space-y-3">
@@ -121,9 +122,9 @@ export function AnalysisPanel({
             </div>
           )}
 
-          {pipeline.warnings && pipeline.warnings.length > 0 && (
+          {safeTexts(pipeline.warnings).length > 0 && (
             <ul className="mt-2 space-y-1.5">
-              {pipeline.warnings.map((w, i) => (
+              {safeTexts(pipeline.warnings).map((w, i) => (
                 <li
                   key={i}
                   className="flex gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800"
@@ -147,7 +148,7 @@ export function AnalysisPanel({
             <span className="tag bg-ink-100 text-ink-500 ring-1 ring-ink-200">本地引擎</span>
           )}
         </div>
-        <p className="text-sm leading-relaxed text-ink-800">{analysis.summary}</p>
+        <p className="text-sm leading-relaxed text-ink-800">{safeText(analysis.summary)}</p>
       </div>
 
       {/* 归因结论 */}
@@ -158,23 +159,23 @@ export function AnalysisPanel({
               className="tag ring-1"
               style={{ background: `${color}1a`, color, boxShadow: `inset 0 0 0 1px ${color}40` }}
             >
-              {ERROR_TYPE_LABEL[diagnosis.type]}
+              {ERROR_TYPE_LABEL[diagnosis?.type] ?? '错因待定'}
             </span>
-            <ConfidencePill value={diagnosis.confidence} />
+            <ConfidencePill value={Number(diagnosis?.confidence ?? 0)} />
           </div>
-          <p className="text-sm leading-relaxed text-ink-700">{diagnosis.reason}</p>
+          <p className="text-sm leading-relaxed text-ink-700">{safeText(diagnosis?.reason)}</p>
           <div>
             <div className="mb-1 flex items-center justify-between text-[11px] font-semibold text-ink-400">
               <span>判断把握</span>
-              <span>{Math.round(diagnosis.confidence * 100)}%</span>
+              <span>{Math.round((Number(diagnosis?.confidence ?? 0) || 0) * 100)}%</span>
             </div>
-            <Progress value={diagnosis.confidence * 100} color={color} />
+            <Progress value={(Number(diagnosis?.confidence ?? 0) || 0) * 100} color={color} />
           </div>
-          {diagnosis.evidence && diagnosis.evidence.length > 0 && (
+          {safeTexts(diagnosis?.evidence).length > 0 && (
             <div>
               <p className="mb-1 text-[11px] font-bold text-ink-500">判断依据</p>
               <ul className="space-y-1">
-                {diagnosis.evidence.map((ev, i) => (
+                {safeTexts(diagnosis?.evidence).map((ev, i) => (
                   <li key={i} className="flex gap-1.5 text-xs leading-relaxed text-ink-600">
                     <span className="text-ink-400">•</span>
                     <span>{ev}</span>
@@ -187,22 +188,32 @@ export function AnalysisPanel({
       </Section>
 
       {/* 知识点（含把握度与判定依据） */}
-      {analysis.knowledgePoints?.length > 0 && (
+      {asArray(analysis.knowledgePoints).length > 0 && (
         <Section title="考点定位" icon="📌" open>
           <ul className="space-y-2">
-            {analysis.knowledgePoints.map((kp, i) => {
-              const conf = Number(kp?.confidence ?? 0)
-              const pct = Math.round(conf * 100)
+            {asArray(analysis.knowledgePoints).map((raw, i) => {
+              /* kp 可能是对象，也可能是字符串；name 再套一层 kpName 兜底 */
+              const kp = (raw ?? {}) as {
+                name?: unknown
+                confidence?: unknown
+                level?: unknown
+                evidence?: unknown
+                model?: unknown
+              }
+              const name = kpName(raw)
+              const conf = Number(kp.confidence ?? 0)
+              const pct = Number.isFinite(conf) ? Math.round(conf * 100) : 0
               const weak = conf > 0 && conf < 0.5
-              const evidence = Array.isArray(kp?.evidence) ? kp.evidence : []
+              const evidence = safeTexts(kp.evidence)
+              const level = safeText(kp.level)
               return (
-                <li key={`${kp?.name ?? 'kp'}-${i}`} className="rounded-xl bg-ink-50/70 p-3">
+                <li key={`${name || 'kp'}-${i}`} className="rounded-xl bg-ink-50/70 p-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-bold text-ink-800">{kp?.name}</span>
-                    {kp?.level && (
-                      <span className="tag ring-1 text-[11px]">{kp.level}</span>
+                    <span className="text-sm font-bold text-ink-800">{name}</span>
+                    {level && (
+                      <span className="tag ring-1 text-[11px]">{level}</span>
                     )}
-                    {kp?.model && (
+                    {safeText(kp.model) && (
                       <span className="tag bg-brand-50 text-[11px] text-brand-700 ring-1 ring-brand-200">
                         题型模型
                       </span>
@@ -238,15 +249,15 @@ export function AnalysisPanel({
       )}
 
       {/* 根因链 */}
-      {analysis.rootCauses.length > 0 && (
+      {asArray(analysis.rootCauses).length > 0 && (
         <Section title="根因链" icon="🔗" open>
           <ol className="space-y-2">
-            {analysis.rootCauses.map((rc, i) => (
+            {asArray(analysis.rootCauses).map((rc, i) => (
               <li key={i} className="flex gap-2.5">
                 <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-ink-900 text-[11px] font-bold text-white">
                   {i + 1}
                 </span>
-                <span className="text-sm leading-relaxed text-ink-700">{rc}</span>
+                <span className="text-sm leading-relaxed text-ink-700">{safeText(rc)}</span>
               </li>
             ))}
           </ol>
@@ -254,31 +265,34 @@ export function AnalysisPanel({
       )}
 
       {/* 正确解法分步 */}
-      {analysis.correctSteps.length > 0 && (
-        <Section title="正确解法（分步讲解）" icon="🪜" open badge={<span className="text-[11px] text-ink-400">{analysis.correctSteps.length} 步</span>}>
+      {asArray(analysis.correctSteps).length > 0 && (
+        <Section title="正确解法（分步讲解）" icon="🪜" open badge={<span className="text-[11px] text-ink-400">{asArray(analysis.correctSteps).length} 步</span>}>
           <ol className="space-y-3">
-            {analysis.correctSteps.map((step, i) => (
-              <li key={i} className="rounded-xl bg-ink-50/70 p-3">
-                <p className="flex items-center gap-2 text-sm font-bold text-ink-800">
-                  <span className="grid h-5 w-5 place-items-center rounded-md bg-brand-600 text-[11px] text-white">
-                    {i + 1}
-                  </span>
-                  {step.title}
-                </p>
-                <p className="mt-1 pl-7 text-xs leading-relaxed text-ink-600">{step.detail}</p>
-              </li>
-            ))}
+            {asArray(analysis.correctSteps).map((raw, i) => {
+              const step = (raw ?? {}) as { title?: unknown; detail?: unknown }
+              return (
+                <li key={i} className="rounded-xl bg-ink-50/70 p-3">
+                  <p className="flex items-center gap-2 text-sm font-bold text-ink-800">
+                    <span className="grid h-5 w-5 place-items-center rounded-md bg-brand-600 text-[11px] text-white">
+                      {i + 1}
+                    </span>
+                    {safeText(step.title)}
+                  </p>
+                  <p className="mt-1 pl-7 text-xs leading-relaxed text-ink-600">{safeText(step.detail)}</p>
+                </li>
+              )
+            })}
           </ol>
         </Section>
       )}
 
       {/* 知识点补强 */}
-      {analysis.knowledgeGaps.length > 0 && (
+      {asArray(analysis.knowledgeGaps).length > 0 && (
         <Section title="需要补强的知识点" icon="📚">
           <div className="flex flex-wrap gap-1.5">
-            {analysis.knowledgeGaps.map((k) => (
-              <span key={k} className="tag bg-amber-50 text-amber-700 ring-1 ring-amber-200">
-                {k}
+            {asArray(analysis.knowledgeGaps).map((k, i) => (
+              <span key={`${kpName(k) || 'kp'}-${i}`} className="tag bg-amber-50 text-amber-700 ring-1 ring-amber-200">
+                {kpName(k)}
               </span>
             ))}
           </div>
@@ -286,13 +300,13 @@ export function AnalysisPanel({
       )}
 
       {/* 学习建议 */}
-      {analysis.tips.length > 0 && (
+      {asArray(analysis.tips).length > 0 && (
         <Section title="学习建议" icon="💡">
           <ul className="space-y-2">
-            {analysis.tips.map((tip, i) => (
+            {asArray(analysis.tips).map((tip, i) => (
               <li key={i} className="flex gap-2 rounded-lg bg-emerald-50/70 px-3 py-2 text-xs leading-relaxed text-emerald-900">
                 <span aria-hidden>✓</span>
-                <span>{tip}</span>
+                <span>{safeText(tip)}</span>
               </li>
             ))}
           </ul>
@@ -300,41 +314,50 @@ export function AnalysisPanel({
       )}
 
       {/* 同类题 */}
-      {analysis.similarQuestions.length > 0 && (
-        <Section title="同类题推荐" icon="🧩" badge={<span className="text-[11px] text-ink-400">{analysis.similarQuestions.length} 题</span>}>
+      {asArray(analysis.similarQuestions).length > 0 && (
+        <Section title="同类题推荐" icon="🧩" badge={<span className="text-[11px] text-ink-400">{asArray(analysis.similarQuestions).length} 题</span>}>
           <div className="space-y-2">
-            {analysis.similarQuestions.map((q, i) => (
-              <div key={i} className="rounded-xl border border-ink-200 p-3">
-                <p className="text-sm font-semibold text-ink-800">{q.stem}</p>
-                <p className="mt-1.5 text-xs text-ink-500">
-                  <span className="font-bold text-emerald-600">答案：</span>
-                  {q.answer}
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-ink-600">{q.analysis}</p>
-              </div>
-            ))}
+            {asArray(analysis.similarQuestions).map((raw, i) => {
+              const q = (raw ?? {}) as { stem?: unknown; answer?: unknown; analysis?: unknown }
+              return (
+                <div key={i} className="rounded-xl border border-ink-200 p-3">
+                  <p className="text-sm font-semibold text-ink-800">{safeText(q.stem)}</p>
+                  <p className="mt-1.5 text-xs text-ink-500">
+                    <span className="font-bold text-emerald-600">答案：</span>
+                    {safeText(q.answer)}
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-ink-600">{safeText(q.analysis)}</p>
+                </div>
+              )
+            })}
           </div>
         </Section>
       )}
 
       {/* 练习计划 */}
-      {analysis.practicePlan.length > 0 && (
+      {asArray(analysis.practicePlan).length > 0 && (
         <Section title="7 天练习计划" icon="📅" open>
           <div className="space-y-2">
-            {analysis.practicePlan.map((task) => (
-              <div key={task.day} className="flex items-start gap-3 rounded-xl border border-ink-200 px-3 py-2">
-                <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-50 text-[11px] font-bold text-brand-700">
-                  D{task.day}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-bold text-ink-800">
-                    {task.focus}
-                    <span className="ml-2 text-[11px] font-semibold text-ink-400">{task.minutes} 分钟</span>
-                  </p>
-                  <p className="mt-0.5 text-xs leading-relaxed text-ink-600">{task.task}</p>
+            {asArray(analysis.practicePlan).map((raw, i) => {
+              const task = (raw ?? {}) as { day?: unknown; focus?: unknown; task?: unknown; minutes?: unknown }
+              const minutes = Number(task.minutes)
+              return (
+                <div key={i} className="flex items-start gap-3 rounded-xl border border-ink-200 px-3 py-2">
+                  <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-50 text-[11px] font-bold text-brand-700">
+                    D{safeText(task.day) || i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-ink-800">
+                      {safeText(task.focus)}
+                      {Number.isFinite(minutes) && (
+                        <span className="ml-2 text-[11px] font-semibold text-ink-400">{minutes} 分钟</span>
+                      )}
+                    </p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-ink-600">{safeText(task.task)}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </Section>
       )}

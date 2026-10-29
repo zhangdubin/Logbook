@@ -2,6 +2,7 @@
  * entry/formModel —— 录入表单的数据模型（拍照录入 / 手动补录 共用）
  */
 
+import { kpNames, safeText, safeTexts } from './kpShape'
 import type { Difficulty, ErrorType, Question, QuestionInput, QuestionType, Subject } from '@/lib/types'
 
 /** 表单可编辑字段 */
@@ -54,14 +55,16 @@ export function formFromQuestion(q: Question): QuestionFormValue {
   return {
     subject: q.subject,
     questionType: q.questionType,
-    knowledgePoints: [...(q.knowledgePoints ?? [])],
-    stem: q.stem ?? '',
-    options: [...(q.options ?? [])],
-    myAnswer: q.myAnswer ?? '',
-    correctAnswer: q.correctAnswer ?? '',
+    /* 存量数据里知识点/选项可能是对象（后端形状漂移过），
+       这里统一规整成字符串，避免对象一路传到表单被当 React 子节点渲染 → 整页白屏 */
+    knowledgePoints: kpNames(q.knowledgePoints),
+    stem: safeText(q.stem),
+    options: safeTexts(q.options),
+    myAnswer: safeText(q.myAnswer),
+    correctAnswer: safeText(q.correctAnswer),
     difficulty: (q.difficulty ?? 3) as Difficulty,
     errorType: q.errorType,
-    errorDetail: q.errorDetail ?? '',
+    errorDetail: safeText(q.errorDetail),
     source: q.source ?? '',
     points: q.points === undefined || q.points === null ? '' : String(q.points),
   }

@@ -31,6 +31,7 @@ import { ModeBanner } from './entry/ModeBanner'
 import { dataClient } from './entry/client'
 import { useStudents } from './entry/hooks'
 import { EMPTY_FORM, formToInput, validateForm } from './entry/formModel'
+import { kpNames, safeText, safeTexts } from './entry/kpShape'
 import { ENGINE_BUSY_NOTE, engineFailTips, ENGINE_ACTION, ENGINE_RETRY } from './entry/engine'
 import type { EngineState } from './entry/engine'
 import type { ConfMap, QuestionFormValue } from './entry/formModel'
@@ -126,21 +127,22 @@ export default function Capture() {
     setForm({
       subject: d.subject ?? '数学',
       questionType: d.questionType ?? '解答题',
-      knowledgePoints: Array.from(new Set(d.knowledgePoints ?? [])),
-      stem: d.stem ?? '',
-      options: [...(d.options ?? [])],
-      myAnswer: d.myAnswer ?? '',
-      correctAnswer: d.correctAnswer ?? '',
+      /* 后端可能返回 [{name, confidence, ...}] 对象数组，统一取名再填表 */
+      knowledgePoints: kpNames(d.knowledgePoints),
+      stem: safeText(d.stem),
+      options: safeTexts(d.options),
+      myAnswer: safeText(d.myAnswer),
+      correctAnswer: safeText(d.correctAnswer),
       difficulty: d.difficulty ?? 3,
       errorType: a.diagnosis?.type ?? 'knowledge_gap',
-      errorDetail: a.diagnosis?.reason ?? '',
+      errorDetail: safeText(a.diagnosis?.reason),
       source: '',
       points: '',
     })
     /* 优先使用后端给的逐字段置信度，没有的字段回落到整体置信度 */
     setConf(buildConfMap(d, a.diagnosis?.confidence))
-    /* AI 推荐知识点去重，避免同名标签重复渲染 */
-    setSuggestions(Array.from(new Set(a.knowledgeGaps ?? [])))
+    /* AI 推荐知识点去重，避免同名标签重复渲染（也可能是对象） */
+    setSuggestions(kpNames(a.knowledgeGaps))
   }
 
   /* ------------------------------ AI 识别 ------------------------------ */
@@ -552,11 +554,11 @@ export default function Capture() {
                     errors={errors}
                     subjectNotice={subjectNotice}
                   />
-                  {result.draft.ocrText && (
+                  {safeText(result.draft.ocrText) && (
                     <details className="mt-4 rounded-xl border border-ink-200 bg-ink-50/60 px-3 py-2">
                       <summary className="cursor-pointer text-xs font-bold text-ink-500">查看 OCR 原始文字</summary>
                       <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-ink-500">
-                        {result.draft.ocrText}
+                        {safeText(result.draft.ocrText)}
                       </pre>
                     </details>
                   )}

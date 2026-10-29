@@ -9,6 +9,7 @@
 import { Badge, Card, Progress } from '@/components/ui'
 import type { PhotoAnalysisResponse } from '@/lib/types'
 import type { ConfMap, FieldKey } from './formModel'
+import { asArray, safeText, safeTexts } from './kpShape'
 
 /* ------------------ 置信度分级与字段中文名 ------------------ */
 
@@ -233,17 +234,19 @@ export function RecognitionQualityCard({ result }: { result: PhotoAnalysisRespon
           <div>
             <p className="mb-2 text-xs font-bold text-ink-700">📊 置信度构成</p>
             <div className="space-y-2.5">
-              {pipeline.signals.map((s, i) => {
-                const sLevel = confLevel(s.value)
+              {asArray(pipeline.signals).map((raw, i) => {
+                const s = (raw ?? {}) as { name?: unknown; value?: unknown; weight?: unknown }
+                const sLevel = confLevel(Number(s.value ?? 0))
                 return (
-                  <div key={`${s.name}-${i}`}>
+                  <div key={`${safeText(s.name) || 'sig'}-${i}`}>
                     <div className="mb-1 flex items-center justify-between gap-2 text-[11px]">
-                      <span className="font-semibold text-ink-600">{s.name}</span>
+                      <span className="font-semibold text-ink-600">{safeText(s.name)}</span>
                       <span className="shrink-0 text-ink-400">
-                        {pctText(s.value)} · 权重 {Math.round(s.weight * 100)}%
+                        {pctText(Number(s.value ?? 0))} · 权重{' '}
+                        {Math.round((Number(s.weight ?? 0) || 0) * 100)}%
                       </span>
                     </div>
-                    <Progress value={s.value * 100} color={sLevel.color} height={6} />
+                    <Progress value={(Number(s.value ?? 0) || 0) * 100} color={sLevel.color} height={6} />
                   </div>
                 )
               })}
@@ -252,11 +255,11 @@ export function RecognitionQualityCard({ result }: { result: PhotoAnalysisRespon
         )}
 
         {/* 需要注意 */}
-        {pipeline?.warnings && pipeline.warnings.length > 0 && (
+        {safeTexts(pipeline?.warnings).length > 0 && (
           <div>
             <p className="mb-2 text-xs font-bold text-ink-700">⚠️ 需要注意</p>
             <ul className="space-y-1.5">
-              {pipeline.warnings.map((w, i) => (
+              {safeTexts(pipeline?.warnings).map((w, i) => (
                 <li
                   key={i}
                   className="flex gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800"

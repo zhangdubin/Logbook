@@ -16,7 +16,7 @@ import {
   saveAiSettings,
   resetAiSettings,
 } from '../settings.js'
-import { resolveProviderConfig, describeActiveEngine, testAiConnection } from '../ai.js'
+import { resolveProviderConfig, describeActiveEngine, describeActiveEngineKind, testAiConnection } from '../ai.js'
 import { requireAuth, requirePermission } from '../auth.js'
 
 const router = Router()
@@ -34,6 +34,9 @@ router.get('/ai', requireAuth, (_req, res) => {
   res.json({
     ...getAiSettingsPublic(),
     activeEngine: describeActiveEngine(cfg),
+    // 结构化判定：前端不该靠解析 activeEngine 文案来猜引擎类型
+    // （走大模型时文案里也有「本地 OCR 服务」，靠 /本地/ 猜会误判）
+    activeEngineKind: describeActiveEngineKind(cfg),
   })
 })
 
@@ -48,6 +51,7 @@ router.put('/ai', requirePermission('settings:ai'), (req, res) => {
   res.json({
     ...pub,
     activeEngine: describeActiveEngine(cfg),
+    activeEngineKind: describeActiveEngineKind(cfg),
     ...(stored?.updatedAt ? { updatedAt: stored.updatedAt } : {}),
   })
 })

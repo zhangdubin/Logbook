@@ -5,6 +5,7 @@ import { useApp } from '@/store/app'
 import { useToast } from '@/store/toast'
 import type { Question } from '@/lib/types'
 import { AlertBox, Badge, Card, EmptyState, Progress, Spinner } from '@/components/ui'
+import { kpNames } from '@/pages/entry/kpShape'
 import { DIFFICULTY_LABEL, subjectColor } from '@/lib/format'
 
 type Mode = 'due' | 'weak' | 'random'
@@ -231,7 +232,7 @@ export function ReviewSession() {
           </span>
           <Badge tone="slate">{current.questionType}</Badge>
           <Badge tone="slate">{DIFFICULTY_LABEL[current.difficulty] ?? '中等'}</Badge>
-          {current.knowledgePoints.map((k) => (
+          {kpNames(current.knowledgePoints).map((k) => (
             <Badge key={k} tone="blue">
               {k}
             </Badge>

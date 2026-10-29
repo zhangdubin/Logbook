@@ -5,11 +5,20 @@
  *   - 引擎名称来自后端的 activeEngine 文案；
  *   - 本地引擎用灰色徽章，启用大模型用绿色徽章；
  *   - 顺带展示最后更新时间，让人知道配置是不是刚改过。
+ *
+ * ⚠️ 引擎类型**不能靠解析文案来判断**：
+ * activeEngine 是复合句 —— 走大模型时也可能是
+ * 「MiniMax-M3.1-Flash@MiniMax，视觉已启用 + 本地 OCR 服务」，
+ * 里面同样有「本地」两个字（本地 OCR 是独立信号源）。
+ * 所以优先用后端给的结构化字段 activeEngineKind（'model' | 'local'），
+ * 没有这个字段的老后端才退回文案判断，且正则只认「本地启发式 / heuristic」，
+ * 绝不能匹配裸的「本地」。
  */
 
 import type { AISettings } from '@/lib/types'
 import { Badge, Skeleton } from '@/components/ui'
 import { formatDateTime } from '@/lib/format'
+import { resolveEngineState } from './engineState'
 import type { LoadState } from './types'
 
 export function EngineStatusCard({
@@ -33,16 +42,7 @@ export function EngineStatusCard({
   }
 
   const usingModel = Boolean(settings.enableModel)
-  const hasEngineText = Boolean(settings.activeEngine?.trim())
-  const engineText = hasEngineText
-    ? (settings.activeEngine as string).trim()
-    : usingModel
-      ? '大模型引擎'
-      : '本地启发式引擎'
-  /* 以后端给的 activeEngine 文案为准：它说走本地就是本地（可能压根没配密钥） */
-  const engineIsLocal = hasEngineText
-    ? /本地|local|heuristic/i.test(engineText)
-    : !usingModel
+  const { engineText, engineIsLocal } = resolveEngineState(settings)
   const degraded = state === 'fallback' || state === 'error'
 
   return (

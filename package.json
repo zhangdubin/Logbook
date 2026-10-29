@@ -13,14 +13,15 @@
     "start": "node --env-file-if-exists=.env server/index.js",
     "typecheck": "tsc --noEmit",
     "seed": "node server/seed.js",
-    "test": "npm run test:infer && npm run test:model && npm run test:advice",
+    "test": "npm run test:infer && npm run test:model && npm run test:advice && npm run test:engine",
     "test:infer": "node scripts/test-infer.mjs --assert",
     "test:model": "node scripts/test-model-client.mjs --assert",
     "test:advice": "node scripts/test-advice.mjs --assert",
     "smoke": "node scripts/smoke.mjs",
     "build:deploy": "node scripts/build-deploy.mjs",
     "deploy:pack": "node scripts/build-deploy.mjs",
-    "deploy:publish": "node scripts/build-deploy.mjs --upload"
+    "deploy:publish": "node scripts/build-deploy.mjs --upload",
+    "test:engine": "node scripts/test-engine-state.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -41,6 +42,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "concurrently": "^10.0.6",
+    "jiti": "^2.7.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.9.0",
     "vite": "^8.3.5"

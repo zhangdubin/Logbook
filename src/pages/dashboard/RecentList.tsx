@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { Badge, Card } from '@/components/ui'
+import { kpNames } from '@/pages/entry/kpShape'
 import { ERROR_TYPE_COLOR, ERROR_TYPE_LABEL } from '@/lib/types'
 import { SUBJECT_BG, formatDate } from '@/lib/format'
 import type { Question } from '@/lib/types'
@@ -39,7 +40,7 @@ export function RecentQuestions({ items }: { items: Question[] }) {
                     {q.subject}
                   </span>
                   <span className="truncate text-sm font-bold text-ink-800 group-hover:text-brand-700">
-                    {q.knowledgePoints[0] ?? '未归类知识点'}
+                    {kpNames(q.knowledgePoints)[0] ?? '未归类知识点'}
                   </span>
                   <span className="ml-auto shrink-0 text-[11px] text-ink-400">
                     {formatDate(q.createdAt)}

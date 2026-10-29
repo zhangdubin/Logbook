@@ -637,6 +637,38 @@ function shortError(err) {
 }
 
 /**
+ * 权限不足（EACCES / EPERM）时给出**可执行**的排查步骤。
+ *
+ * 容器部署最常见的坑：程序目录（/app）属主是 root，
+ * 而进程是以非 root 的 node 用户运行的 ——
+ * 在线更新要把新版本的文件覆盖到 /app 下，直接被系统拒绝。
+ *
+ * 只说「权限不足」用户没法自己解决，必须明确告诉他下一步敲什么。
+ *
+ * @returns {string|null} 提示文本；不是权限问题则返回 null
+ */
+function permissionHint(err) {
+  const code = String(err?.code ?? '')
+  if (code !== 'EACCES' && code !== 'EPERM') return null
+
+  const inContainer = fs.existsSync('/.dockerenv') || String(process.env.IN_CONTAINER ?? '') === '1'
+  if (inContainer) {
+    return [
+      '原因：容器以非 root 用户运行，但程序目录属主是 root，写不进去。',
+      '在**宿主机**上执行下面两条即可修复（需要重建镜像让新属主生效）：',
+      '  cd /opt/cuoti-analytics && docker compose --profile ocr up -d --build',
+      '若仍失败，说明源码目录是从宿主机挂载进去的，请在宿主机执行：',
+      '  sudo chown -R 1000:1000 /opt/cuoti-analytics',
+    ].join('\n')
+  }
+  return [
+    '原因：当前账号没有写入程序目录的权限。',
+    '请用有权限的账号重试，或执行：',
+    '  sudo chown -R $(whoami) /opt/cuoti-analytics',
+  ].join('\n')
+}
+
+/**
  * 归档里需要忽略的“杂物”条目。
  * macOS 的 tar 会带上 AppleDouble（`._xxx`）与 `__MACOSX/`，部分工具还会写
  * `pax_global_header` / `.DS_Store`。它们不是程序文件，必须排除，
@@ -883,15 +915,18 @@ export async function runUpdate() {
     }
     return getUpdateStatus()
   } catch (err) {
+    const hint = permissionHint(err)
     const message = sanitize(shortError(err))
+    const detail = hint ? `${message}\n\n${hint}` : message
     setStatus({
       state: 'failed',
-      message: `更新失败：${message}`,
+      message: `更新失败：${detail}`,
       progress: 0,
-      error: message,
+      error: detail,
       finishedAt: nowISO(),
     })
     addLog(`✗ 更新失败：${message}`)
+    if (hint) addLog(hint)
     return getUpdateStatus()
   } finally {
     running = false
@@ -963,6 +998,7 @@ export async function rollbackUpdate() {
     addLog(`回滚完成：当前版本 ${restored}（请重启服务）`)
     return getUpdateStatus()
   } catch (err) {
+    const hint = permissionHint(err)
     const message = sanitize(shortError(err))
     setStatus({
       state: 'failed',

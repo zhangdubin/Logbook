@@ -95,7 +95,15 @@ COPY --chown=node:node deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 # 工作区里被写成 600 的 package.json 进镜像后，非 root 的 node 用户读不到，
 # 容器会反复重启并报 ERR_INVALID_PACKAGE_CONFIG。
 #   a+rX = 所有用户可读，目录/已是可执行的文件再加执行位
+#
+# 另外必须让 node 用户**能写** /app 本身和 package.json：
+# 容器里的「在线更新」会把新版本的文件覆盖到 /app 下，
+# 而 /app 默认属主是 root —— 非 root 的 node 用户写不进去，
+# 在线更新会直接报 EACCES「权限不足」。
+#   chown **不加 -R**：递归 chown 会把整个 /app 复制成新一层（实测多 76MB）；
+#   只改 /app 这个目录自己的属主是纯元数据操作，不复制任何文件。
 RUN chmod 644 package.json package-lock.json \
+ && chown node:node /app package.json package-lock.json \
  && chmod -R a+rX dist server \
  && chmod 755 /usr/local/bin/entrypoint.sh
 
