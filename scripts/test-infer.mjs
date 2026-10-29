@@ -236,18 +236,29 @@ for (const t of TYPE_SAMPLES) {
 /* 3. 知识点                                                                   */
 /* -------------------------------------------------------------------------- */
 console.log('\n=== 知识点（inferKnowledgePoints）===')
+// 返回结构：[{ name, confidence, level, evidence[] }] —— 对象数组
 const kpCases = [
-  { subject: '数学', text: '鸡兔同笼问题：笼子里有鸡和兔共 20 只，脚 56 只，求鸡兔各几只？', expectAny: ['鸡兔同笼'] },
-  { subject: '数学', text: '甲乙两地相距 240 千米，两车相向而行，求相遇时间。', expectAny: ['行程问题'] },
-  { subject: '数学', text: '一个三角形的面积是多少？求周长。', expectAny: ['几何面积'] },
-  { subject: '语文', text: '给加点字注音并组词，再写两个近义词。', expectAny: ['字词基础', '拼音', '词语积累'] },
-  { subject: '英语', text: '用括号内词的适当形式填空，注意时态变化。', expectAny: ['语法与时态', '语法填空'] },
+  { subject: '数学', text: '鸡兔同笼问题：笼子里有鸡和兔共 20 只，脚 56 只，求鸡兔各几只？', expectAny: ['鸡兔同笼问题'] },
+  { subject: '数学', text: '甲乙两地相距 240 千米，两车相向而行，求相遇时间。', expectAny: ['速度与时间问题'] },
+  { subject: '数学', text: '一个三角形的面积是多少？求周长。', expectAny: ['面积与周长'] },
+  { subject: '数学', text: '把一根木头锯成 6 段，每隔 5 米栽一棵树，两端都栽，一共栽多少棵？', expectAny: ['植树与间隔问题'] },
+  { subject: '数学', text: '一项工程甲队单独做 10 天完成，乙队单独做 15 天完成，两队合作几天完成？', expectAny: ['工程效率问题'] },
+  { subject: '数学', text: '计算 3/4 + 1/8 的结果，结果化成最简分数。', expectAny: ['分数运算'] },
+  { subject: '语文', text: '给加点字注音并组词，再写两个近义词。', expectAny: ['字词积累', '拼音与多音字'] },
+  { subject: '语文', text: '修改病句：春天的北京是一年四季中最美的季节。', expectAny: ['病句辨析'] },
+  { subject: '语文', text: '按课文填空：床前明月光，＿＿＿＿＿。', expectAny: ['古诗文默写'] },
+  { subject: '英语', text: '用括号内词的适当形式填空，注意时态变化。', expectAny: ['语法与时态', '语法填空技巧'] },
+  { subject: '英语', text: '完形填空：通读全文，从每题所给的四个选项中选出最佳答案。', expectAny: ['完形填空技巧'] },
 ]
 for (const c of kpCases) {
   const kps = inferKnowledgePoints(c.text, c.subject)
-  console.log(`  ${c.subject}  ${c.text.slice(0, 22)}… → [${kps.join(', ')}]`)
-  check(`${c.subject} 知识点命中`, kps.some((k) => c.expectAny.includes(k)), `实际 ${JSON.stringify(kps)}`)
-  check(`${c.subject} 知识点 ≤ 5`, kps.length <= 5)
+  console.log(`  ${c.subject}  ${c.text.slice(0, 22)}… → ${JSON.stringify(kps)}`)
+  // 断言包含期望知识点（不再要求等于）
+  check(`${c.subject} 知识点命中`, kps.some((k) => c.expectAny.includes(k.name)), `实际 ${JSON.stringify(kps)}`)
+  check(`${c.subject} 知识点 ≤ 3`, kps.length <= 3, `实际 ${kps.length}`)
+  check(`${c.subject} 知识点结构合法`, kps.every((k) => typeof k.name === 'string' && k.name && typeof k.confidence === 'number' && k.confidence > 0 && k.confidence <= 1 && ['基础', '进阶', '难点'].includes(k.level) && Array.isArray(k.evidence) && k.evidence.length > 0), `实际 ${JSON.stringify(kps)}`)
+  const hit = kps.find((k) => c.expectAny.includes(k.name))
+  check(`${c.subject} 命中项 confidence ≥ 0.5`, !hit || hit.confidence >= 0.5, `实际 ${hit && hit.confidence}`)
 }
 eq('无证据时知识点为空', inferKnowledgePoints('随便一段没有特征的话', '数学').length, 0)
 

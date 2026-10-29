@@ -64,7 +64,13 @@ PREPROCESS = os.environ.get("OCR_PREPROCESS", "1") not in ("0", "false", "False"
 # 736 = 引擎检测模型自己的输入尺度（limit_side_len），先按这个尺度用 LANCZOS 放大，
 # 比引擎内部的双线性拉伸更清晰（实测 hard 档 736 比 1000/1400 更好）。
 TARGET_SHORT = int(os.environ.get("OCR_TARGET_SHORT", "736"))
-MIN_SHORT = int(os.environ.get("OCR_MIN_SHORT", "700"))
+# 预处理阶段的放大下限。**默认 0 = 不放大**：
+#   实测（scripts/ocr-bench 四档）引擎自己把短边拉到 736（双线性）的效果
+#   比我们先用 LANCZOS 放大到 2000px 再让引擎拉一次更好：
+#     引擎自己拉   clean 1.90% phone 0.15% real 0.85% hard 50.69%
+#     侧车先拉     clean 2.29% phone 0.31% real 0.85% hard 51.18%
+#   需要自己放大时把它设成 300~700。
+MIN_SHORT = int(os.environ.get("OCR_MIN_SHORT", "0"))
 MAX_LONG = int(os.environ.get("OCR_MAX_LONG", "2000"))
 # 参与对比的变体（逗号分隔）
 VARIANTS = [
@@ -76,19 +82,56 @@ VARIANTS = [
 CLAHE_CLIP = float(os.environ.get("OCR_CLAHE_CLIP", "2.0"))
 CLAHE_CLIP_SOFT = float(os.environ.get("OCR_CLAHE_CLIP_SOFT", "1.5"))
 CLAHE_GRID = int(os.environ.get("OCR_CLAHE_GRID", "8"))
-# 检测框外扩比例（默认 1.6 会把被压扁的文字切掉，2.0 对小字更友好）
-DET_UNCLIP = float(os.environ.get("OCR_DET_UNCLIP", "2.0"))
+# 检测框外扩比例（默认 1.6 会把被压扁的文字切掉，2.5 对小字更友好）
+DET_UNCLIP = float(os.environ.get("OCR_DET_UNCLIP", "2.5"))
+# ONNX Runtime 线程数：默认 -1 = 用满所有核。
+# 实测（Mac, 10 核）：-1 时单张识别峰值内存 1.7GB，限到 2 线程后降到几百 MB，
+# 速度基本不变 —— 检测是访存瓶颈，多开线程收益很小、内存却是线性涨。
+# NAS 部署建议保持 2（内存吃紧可以设 1）。
+ORT_THREADS = int(os.environ.get("OCR_ORT_THREADS", "2"))
+# 检测模型输入的短边下限（RapidOCR 的 limit_side_len）
+# 736 = RapidOCR 默认。调小能显著降低峰值内存（NAS 友好），调大对大图更准。
+DET_LIMIT_SIDE_LEN = int(os.environ.get("OCR_DET_LIMIT", "736"))
 # 兜底阶段尝试的外扩比例
 UNCLIP_VALUES = [
     float(v.strip())
-    for v in os.environ.get("OCR_UNCLIP_VALUES", "1.6,2.0").split(",")
+    for v in os.environ.get("OCR_UNCLIP_VALUES", "2.0,2.5,3.0").split(",")
     if v.strip()
 ]
 # 快速路径默认外扩
 UNCLIP_DEFAULT = float(os.environ.get("OCR_UNCLIP_DEFAULT", "1.6"))
+# 快速路径里的「增强候选」：哪个变体 + 外扩比例
+# 实测（scripts/ocr-bench，real 档 = 真实手机分辨率）：
+#   保守(original@1.6) 4.50%  ->  增强(clahe@2.5 + 放宽阈值) 0.70%
+# 所以快速路径跑两次，谁好谁上，约 0.8s/张。
+FAST_STRONG_VARIANT = os.environ.get("OCR_FAST_STRONG_VARIANT", "clahe")
+UNCLIP_STRONG = float(os.environ.get("OCR_UNCLIP_STRONG", "2.5"))
+# 兜底阶段的检测阈值（比引擎默认更宽松，保住被截断的半行）
+# 引擎默认：thresh=0.3 / box_thresh=0.5
+DET_THRESH = float(os.environ.get("OCR_DET_THRESH", "0.15"))
+DET_BOX_THRESH = float(os.environ.get("OCR_DET_BOX_THRESH", "0.2"))
 # 快速路径的「够好」门槛：平均分达到这个值就不用再跑其它变体
 FAST_MIN_SCORE = float(os.environ.get("OCR_FAST_MIN_SCORE", "0.90"))
 FAST_MIN_CHARS = int(os.environ.get("OCR_FAST_MIN_CHARS", "10"))
+# --------------------------------------------------------------------------
+# 可选：server 级大模型（体积/速度/准确率见 README 的对照表）
+#   移动版模型 15MB / 0.3s 一张 / hard 档 CER 54%
+#   server 版模型 ~190MB / 5s 一张 / hard 档 CER 43%
+# 配了文件路径才启用；没配就完全不影响现有行为（clear/phone 档根本走不到这里）。
+# 用 ocr-service/fetch_models.py 下载模型。
+# --------------------------------------------------------------------------
+SERVER_DET = os.environ.get("OCR_SERVER_DET", "").strip()
+SERVER_REC = os.environ.get("OCR_SERVER_REC", "").strip()
+SERVER_KEYS = os.environ.get("OCR_SERVER_KEYS", "").strip()
+# server 模型的外扩比例（实测 2.5 最稳）
+SERVER_UNCLIP = float(os.environ.get("OCR_SERVER_UNCLIP", "2.5"))
+# 移动版结果「太差」时才启用 server 模型（平均分低于这个值 / 行数不足）
+SERVER_TRIGGER_SCORE = float(os.environ.get("OCR_SERVER_TRIGGER_SCORE", "0.95"))
+SERVER_TRIGGER_ROWS = int(os.environ.get("OCR_SERVER_TRIGGER_ROWS", "3"))
+# server 模型最多试几个预处理变体（每个 5 秒，不能多跑）
+SERVER_MAX_VARIANTS = int(os.environ.get("OCR_SERVER_MAX_VARIANTS", "2"))
+# 大模型候选要比移动版好这么多才换（1.08 = 至少好 8%）
+SERVER_SWITCH_RATIO = float(os.environ.get("OCR_SERVER_SWITCH_RATIO", "0.88"))
 # 「不处理」变体的排序加成（只有别的变体明显更好才换）
 ORIG_BONUS = float(os.environ.get("OCR_ORIG_BONUS", "1.03"))
 # 调试：打印每个变体的打分
@@ -100,6 +143,9 @@ _engine_name = "none"
 _engine = None
 _engine_lock = threading.Lock()
 _engine_error: str | None = None
+# 正在处理的 OCR 请求数（只给 /health 看，不参与任何判定，避免和长请求互相等待）
+_busy_count = 0
+_busy_lock = threading.Lock()
 
 
 # --------------------------------------------------------------------------
@@ -112,11 +158,17 @@ def _try_rapidocr():
         from rapidocr_onnxruntime import RapidOCR  # type: ignore
 
         _engine_name = "rapidocr"
-        # det_unclip_ratio=2.0：默认 1.6 会把被压扁/糊掉的文字切掉一截
+        # 走自定义配置：限制 ONNX 线程数（默认用满所有核，常驻内存能到 1.7GB）
         try:
-            return RapidOCR(det_unclip_ratio=DET_UNCLIP)
+            eng = _build_engine()
+            eng.text_det.postprocess_op.unclip_ratio = DET_UNCLIP
+            return eng
         except Exception:
-            return RapidOCR()
+            # det_unclip_ratio=2.0：默认 1.6 会把被压扁/糊掉的文字切掉一截
+            try:
+                return RapidOCR(det_unclip_ratio=DET_UNCLIP)
+            except Exception:
+                return RapidOCR()
     except ImportError:
         pass
     try:
@@ -176,6 +228,97 @@ def get_engine():
             "（推荐 rapidocr-onnxruntime，纯 CPU 即可运行）"
         )
         print(f"[ocr] {_engine_error}", file=sys.stderr, flush=True)
+        return None
+
+
+# --------------------------------------------------------------------------
+# 可选的 server 级引擎（大模型，体积大、慢，但拍糊的图识别率高很多）
+# --------------------------------------------------------------------------
+_server_engine = None
+_server_engine_failed = False
+
+
+def _build_engine(det_path: str | None = None, rec_path: str | None = None,
+                  keys_path: str | None = None, threads: int | None = None):
+    """按 RapidOCR 的安装配置生成一个指定模型的引擎实例。
+
+    threads：ONNX Runtime 的 intra_op 线程数。
+      onnxruntime 每个线程都会给卷积层留一份大的临时缓冲，默认「-1」= 用满所有核，
+      一张 2000px 的图就能把常驻内存顶到 1.7GB（NAS 上很容易 OOM）。
+      限制成 2 线程后内存大幅下降，速度基本不变（检测是访存瓶颈，不是算力瓶颈）。
+    """
+    from rapidocr_onnxruntime import RapidOCR  # type: ignore
+    import rapidocr_onnxruntime as _pkg
+    import re as _re
+    import tempfile as _tf
+
+    if threads is None:
+        threads = ORT_THREADS
+
+    base = os.path.join(os.path.dirname(_pkg.__file__), "config.yaml")
+    with open(base, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    pkg_dir = os.path.dirname(_pkg.__file__)
+
+    def _abs(p: str) -> str:
+        return p if os.path.isabs(p) else os.path.join(pkg_dir, p)
+
+    section = None
+    for i, ln in enumerate(lines):
+        m = _re.match(r"^([A-Za-z_]+):", ln)
+        if m:
+            section = m.group(1)
+        if "model_path:" in ln:
+            if section == "Det":
+                lines[i] = f"    model_path: {_abs(det_path) if det_path else _abs(ln.split(':', 1)[1].strip())}"
+            elif section == "Rec":
+                lines[i] = f"    model_path: {_abs(rec_path) if rec_path else _abs(ln.split(':', 1)[1].strip())}"
+        if "intra_op_num_threads:" in ln and "&intra_nums" in ln:
+            lines[i] = _re.sub(r"(-?\d+)\s*$", str(threads), ln)
+        if section == "Det" and "limit_side_len:" in ln:
+            # 检测模型的输入尺寸：RapidOCR 的「短边至少 limit_side_len」= 把短边
+            # 拉到 limit_side_len（长边等比变长）。短边越大，检测越准、内存越高：
+            #   736 -> 输入约 2400x736，峰值内存 ~700MB
+            #   576 -> 输入约 1900x576，峰值内存 ~350MB（实测 hard 档准确率反而更高）
+            lines[i] = f"    limit_side_len: {DET_LIMIT_SIDE_LEN}"
+    text = "\n".join(lines) + "\n"
+    if keys_path:
+        text = text.replace(
+            "    rec_img_shape: [3, 48, 320]",
+            f"    rec_img_shape: [3, 48, 320]\n    rec_keys_path: {keys_path}",
+        )
+    tag = "server" if det_path else "mobile"
+    cfg_path = os.path.join(_tf.gettempdir(), f"ocr_{tag}_engine.yaml")
+    with open(cfg_path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    return RapidOCR(config_path=cfg_path)
+
+
+def get_server_engine():
+    """惰性加载 server 级引擎（只有配了模型文件才会用）。"""
+    global _server_engine, _server_engine_failed
+    if _server_engine is not None:
+        return _server_engine
+    if _server_engine_failed:
+        return None
+    if not (SERVER_DET and SERVER_REC):
+        _server_engine_failed = True
+        return None
+    if not (os.path.exists(SERVER_DET) and os.path.exists(SERVER_REC)):
+        print(f"[ocr] 找不到 server 模型（{SERVER_DET} / {SERVER_REC}），跳过", file=sys.stderr, flush=True)
+        _server_engine_failed = True
+        return None
+    if SERVER_KEYS and not os.path.exists(SERVER_KEYS):
+        print(f"[ocr] 找不到字符表 {SERVER_KEYS}，跳过 server 模型", file=sys.stderr, flush=True)
+        _server_engine_failed = True
+        return None
+    try:
+        _server_engine = _build_engine(SERVER_DET, SERVER_REC, SERVER_KEYS or None)
+        print("[ocr] server 级模型已就绪（拍糊的图会用它兜底）", flush=True)
+        return _server_engine
+    except Exception as exc:  # pragma: no cover - 环境相关
+        print(f"[ocr] server 模型加载失败：{exc}", file=sys.stderr, flush=True)
+        _server_engine_failed = True
         return None
 
 
@@ -266,7 +409,16 @@ def _normalize_size(img: Any) -> Any:
     * 短边太小（远距离拍、字小）-> **等比放大**到 TARGET_SHORT（引擎内部只会用
       双线性拉伸，放大质量差；我们先用 LANCZOS 放大 + 锐化，识别率提升最明显）。
     * 长边太大（手机原图）-> 等比缩小到 MAX_LONG。
+
+    ⚠️ 这里的 PIL 必须在函数内 import：模块顶层没有 `from PIL import Image`，
+    之前写成 `Image.LANCZOS` 会抛 NameError，被 except 吞掉后**悄悄返回原图**，
+    整个「把小字放大」的处理其实一次都没生效过。
     """
+    try:
+        from PIL import Image  # type: ignore
+    except Exception:
+        return img
+
     w, h = img.size
     long_side, short_side = max(w, h), min(w, h)
     if not long_side or not short_side:
@@ -282,7 +434,8 @@ def _normalize_size(img: Any) -> Any:
 
     new_size = (max(32, int(w * scale)), max(32, int(h * scale)))
     try:
-        return img.resize(new_size, Image.LANCZOS)  # type: ignore[attr-defined]
+        resample = getattr(Image, "Resampling", Image).LANCZOS
+        return img.resize(new_size, resample)
     except Exception:
         return img
 
@@ -432,19 +585,52 @@ def _merge_rows(
     return merged_texts, merged_scores, merged_lines
 
 
-def _set_unclip(engine: Any, unclip: float) -> None:
-    """运行时切换检测框外扩比例（不必为不同参数各加载一个引擎）。"""
+def _set_det_params(engine: Any, unclip: float, thresh: float | None = None,
+                     box_thresh: float | None = None) -> None:
+    """运行时切换检测参数（不必为不同参数各加载一个引擎）。
+
+    实测（scripts/ocr-bench，hard 档）：
+      * box_thresh 0.5 -> 0.2：DB 会把「整行中间偏淡的一段」直接丢掉，
+        结果是句子被从中间截断（"Read and choose tre best" 少了 answer）；
+        放宽阈值后这类碎片能被检出、再由同行合并拼回去。
+      * thresh 0.3 -> 0.15：同上，让概率图保留更多弱笔画。
+      * unclip_ratio 1.6 -> 2.5/3.0：被压扁/糊掉的行往外扩一点，框才盖得住。
+    """
     try:
         op = engine.text_det.postprocess_op
         if hasattr(op, "unclip_ratio"):
             op.unclip_ratio = unclip
+        if thresh is not None and hasattr(op, "thresh"):
+            op.thresh = thresh
+        if box_thresh is not None and hasattr(op, "box_thresh"):
+            op.box_thresh = box_thresh
     except Exception:
         pass
 
 
-def _ocr_variant(engine: Any, name: str, data: bytes, unclip: float) -> dict | None:
-    """跑一个「预处理变体 + 检测外扩比例」的组合，返回结果字典。"""
-    _set_unclip(engine, unclip)
+def _rank(r: dict, mx: dict) -> float:
+    """候选打分：置信度 × 行覆盖 × 字覆盖。
+
+    * 行数/字数太少 -> 罚分（0.25 保底）：有的变体会「自信地」只认出 1 行、
+      平均分还不低，但内容全丢了，所以覆盖率必须参与打分。
+    * 「不处理」变体有加成：只有别的变体明显更好才换（否则清晰图会被过度处理弄坏）。
+    * 大模型候选要**明显更好**才换：它更自信，但偶尔会在本来清楚的图上读错
+      （实测 real 档：直接换成大模型 4.50%，移动版 0.85%）。
+    """
+    row_factor = r["rows"] / (mx.get("rows") or 1)
+    char_factor = r["chars"] / (mx.get("chars") or 1)
+    rank = r["mean"] * (0.5 + 0.5 * row_factor) * (0.25 + 0.75 * char_factor)
+    if r["name"].startswith("original"):
+        rank *= ORIG_BONUS
+    if r["name"].startswith("server_"):
+        rank /= SERVER_SWITCH_RATIO
+    return rank
+
+
+def _ocr_variant(engine: Any, name: str, data: bytes, unclip: float,
+                 thresh: float | None = None, box_thresh: float | None = None) -> dict | None:
+    """跑一个「预处理变体 + 检测参数」的组合，返回结果字典。"""
+    _set_det_params(engine, unclip, thresh, box_thresh)
     try:
         raw = engine(data)
     except TypeError:
@@ -495,41 +681,87 @@ def run_ocr(image_bytes: bytes) -> tuple[list[str], list[float], list[dict], str
         variants = [("original", image_bytes)]
 
     # ---- 1. 快速路径 ----
-    fast = _ocr_variant(engine, variants[0][0], variants[0][1], UNCLIP_DEFAULT)
-    if fast and fast["mean"] >= FAST_MIN_SCORE and fast["rows"] >= 2 and fast["chars"] >= FAST_MIN_CHARS:
-        return fast["texts"], fast["scores"], fast["lines"], fast["name"]
-
-    # ---- 2. 兜底：全量候选 ----
+    # 两个候选，谁好谁上：
+    #   a) 保守（original + 引擎默认阈值）：清晰图最稳（clean 档 1.90%）
+    #   b) 增强（clahe + 放宽阈值）：手机拍的题差别很大（real 档 4.50% -> 0.70%）
+    # 只跑这两次就够绝大多数图片定稿，约 0.8s/张。
     results: list[dict] = []
+    fast = _ocr_variant(engine, variants[0][0], variants[0][1], UNCLIP_DEFAULT)
     if fast:
         results.append(fast)
+    for name, data in variants:
+        if name == FAST_STRONG_VARIANT:
+            r = _ocr_variant(engine, name, data, UNCLIP_STRONG, DET_THRESH, DET_BOX_THRESH)
+            if r:
+                results.append(r)
+            break
+
+    if results:
+        mx_fast = {
+            "rows": max(r["rows"] for r in results) or 1,
+            "chars": max(r["chars"] for r in results) or 1,
+        }
+        best_fast = max(results, key=lambda r: _rank(r, mx_fast))
+        if (
+            best_fast["mean"] >= FAST_MIN_SCORE
+            and best_fast["rows"] >= 2
+            and best_fast["chars"] >= FAST_MIN_CHARS
+        ):
+            return best_fast["texts"], best_fast["scores"], best_fast["lines"], best_fast["name"]
+
+    # ---- 2. 兜底：全量候选 ----
+    # 图糊/光线差时放宽检测阈值（保住被截断的半行），再叠加多个预处理变体。
     for unclip in UNCLIP_VALUES:
         for name, data in variants:
             if unclip == UNCLIP_DEFAULT and name == variants[0][0]:
                 continue  # 快速路径已经跑过
-            r = _ocr_variant(engine, name, data, unclip)
+            if unclip == UNCLIP_STRONG and name == FAST_STRONG_VARIANT:
+                continue  # 快速路径已经跑过
+            r = _ocr_variant(engine, name, data, unclip, DET_THRESH, DET_BOX_THRESH)
             if r:
                 results.append(r)
 
     if not results:
         return [], [], [], "none"
 
+    # ---- 3. server 级大模型兜底 ----
+    # 移动版模型实在认不动时（分数低 / 行数不够），才请大模型上。
+    # 大模型 ~5s 一张、~190MB，所以只在「真的不行」时才用，清晰图永远走不到这里。
+    server_used = False
+    if SERVER_DET and SERVER_REC:
+        best_mobile = max(results, key=lambda r: r["mean"] * (0.5 + 0.5 * r["rows"]) * r["chars"])
+        if best_mobile["mean"] < SERVER_TRIGGER_SCORE or best_mobile["rows"] < SERVER_TRIGGER_ROWS:
+            server = get_server_engine()
+            if server is not None:
+                # 挑移动版表现最好的几个预处理变体给大模型用
+                ordered = sorted(results, key=lambda r: r["mean"] * r["chars"], reverse=True)
+                picked: list[str] = []
+                for r in ordered:
+                    base_name = r["name"].split("@")[0]
+                    if base_name not in picked:
+                        picked.append(base_name)
+                    if len(picked) >= SERVER_MAX_VARIANTS:
+                        break
+                for base_name in picked:
+                    for name, data in variants:
+                        if name != base_name:
+                            continue
+                        r = _ocr_variant(server, name, data, SERVER_UNCLIP, DET_THRESH, DET_BOX_THRESH)
+                        if r:
+                            r["name"] = f"server_{r['name']}"
+                            results.append(r)
+                            server_used = True
+
     # 期望行数 / 字数 = 各候选里的最大值（谁认得最全，谁当基准）
     max_rows = max(r["rows"] for r in results) or 1
     max_chars = max(r["chars"] for r in results) or 1
+    mx = {"rows": max_rows, "chars": max_chars}
 
     best = None
     best_rank = -1.0
     ranks = []
     for r in results:
-        row_factor = r["rows"] / max_rows
-        char_factor = r["chars"] / max_chars
-        # 行数/字数太少 -> 罚分（0.25 保底：最差也要拿 0.25 的系数）
-        # 覆盖率打分很关键：有的变体会「自信地」只认出 1 行、平均分还不低，但内容全丢了
-        rank = r["mean"] * (0.5 + 0.5 * row_factor) * (0.25 + 0.75 * char_factor)
-        # 「不处理」是基准：只有别的变体明显更好才换（否则清晰图会被过度处理弄坏）
-        if r["name"].startswith("original"):
-            rank *= ORIG_BONUS
+        rank = _rank(r, mx)
         ranks.append((r["name"], round(rank, 4), round(r["mean"], 3), r["rows"], r["chars"]))
         if rank > best_rank:
             best_rank = rank
@@ -581,12 +813,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path.rstrip("/") in ("/health", ""):
-            eng = get_engine()
+            # 健康检查**绝不能被长请求阻塞**：
+            #   - 不调用 get_engine()（那会把引擎加载锁一起等住，最坏等好几秒）
+            #   - 只读已经缓存好的状态
+            #   - 容器编排（docker compose / k8s）靠这个判断存活，
+            #     一旦超时就会把容器标成 unhealthy，用户看到的是「服务不稳定」。
+            loaded = _engine is not None
+            failed = _engine_error is not None and not loaded
             self._send(
-                200 if eng is not None else 503,
+                503 if failed else 200,
                 {
-                    "ok": eng is not None,
+                    "ok": not failed,
                     "engine": _engine_name,
+                    "status": "ready" if loaded else ("failed" if failed else "loading"),
+                    "busy": _busy_count,
                     "error": _engine_error,
                     "maxBytes": MAX_IMAGE_BYTES,
                 },
@@ -617,7 +857,14 @@ class Handler(BaseHTTPRequestHandler):
                 results = []
                 for item in images:
                     data = decode_image(item)
-                    texts, scores, lines, variant = run_ocr(data)
+                    global _busy_count
+                    with _busy_lock:
+                        _busy_count += 1
+                    try:
+                        texts, scores, lines, variant = run_ocr(data)
+                    finally:
+                        with _busy_lock:
+                            _busy_count -= 1
                     results.append(
                         {
                             "prunedResult": {
@@ -666,7 +913,20 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"[ocr] 本地 OCR 服务已启动：http://{HOST}:{PORT}", flush=True)
-    print(f"[ocr] 引擎：{_engine_name}（首次调用时惰性加载）", flush=True)
+    print(f"[ocr] 引擎：{_engine_name}（启动后台预热中）", flush=True)
+
+    # 后台预热：别让第一个真实请求替大家等模型加载（移动版约 1~3s，server 版更久）。
+    # 预热线程是守护线程，失败也不影响服务可用性 —— /health 会如实报 loading/failed。
+    def _warmup() -> None:
+        try:
+            eng = get_engine()
+            if eng is not None:
+                print(f"[ocr] 引擎已就绪：{_engine_name}", flush=True)
+        except Exception as exc:  # pragma: no cover
+            print(f"[ocr] 引擎预热失败：{exc}", file=sys.stderr, flush=True)
+
+    threading.Thread(target=_warmup, name="ocr-warmup", daemon=True).start()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
