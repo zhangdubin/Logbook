@@ -164,6 +164,10 @@ export interface AIKnowledgePoint {
   confidence: number
   /** 该知识点在教材体系中的层级 */
   level?: '基础' | '进阶' | '难点'
+  /** 判定依据：哪些词/哪句话让你判成这个知识点 */
+  evidence?: string[]
+  /** true 表示这条是从「题型模型」推出来的（比泛化的大类更具体） */
+  model?: boolean
 }
 
 export interface AIErrorDiagnosis {

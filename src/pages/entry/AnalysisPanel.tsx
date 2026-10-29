@@ -186,6 +186,57 @@ export function AnalysisPanel({
         </div>
       </Section>
 
+      {/* 知识点（含把握度与判定依据） */}
+      {analysis.knowledgePoints?.length > 0 && (
+        <Section title="考点定位" icon="📌" open>
+          <ul className="space-y-2">
+            {analysis.knowledgePoints.map((kp, i) => {
+              const conf = Number(kp?.confidence ?? 0)
+              const pct = Math.round(conf * 100)
+              const weak = conf > 0 && conf < 0.5
+              const evidence = Array.isArray(kp?.evidence) ? kp.evidence : []
+              return (
+                <li key={`${kp?.name ?? 'kp'}-${i}`} className="rounded-xl bg-ink-50/70 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-bold text-ink-800">{kp?.name}</span>
+                    {kp?.level && (
+                      <span className="tag ring-1 text-[11px]">{kp.level}</span>
+                    )}
+                    {kp?.model && (
+                      <span className="tag bg-brand-50 text-[11px] text-brand-700 ring-1 ring-brand-200">
+                        题型模型
+                      </span>
+                    )}
+                    {conf > 0 && (
+                      <span
+                        className={`text-[11px] font-semibold ${weak ? 'text-amber-600' : 'text-ink-400'}`}
+                      >
+                        把握 {pct}%
+                      </span>
+                    )}
+                  </div>
+                  {conf > 0 && (
+                    <div className="mt-1.5">
+                      <Progress value={pct} color={weak ? '#d97706' : '#3b63f6'} />
+                    </div>
+                  )}
+                  {weak && (
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-amber-700">
+                      这个考点把握不大，可能是同类题里套着别的模型 —— 请对照原题确认。
+                    </p>
+                  )}
+                  {evidence.length > 0 && (
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-ink-500">
+                      依据：{evidence.slice(0, 3).join('、')}
+                    </p>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </Section>
+      )}
+
       {/* 根因链 */}
       {analysis.rootCauses.length > 0 && (
         <Section title="根因链" icon="🔗" open>
