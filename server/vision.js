@@ -298,6 +298,8 @@ const SUBJECT_KEYWORDS = {
     '光的直线传播', '光的色散', '声波', '响度', '音调', '音色', '波长', '超声', '次声',
     '原子核', '质子', '中子', '电流表', '电压表', '量筒', '量杯', '天平', '测力计',
     '推力', '拉力', '压力', '匀速直线运动', '力的示意图', '受力的示意图', '光的反射',
+    '光滑水平面', '水平面', '竖直方向', '支持力', '合外力', '牛顿', '运动状态',
+    '匀速直线', '物体运动', '力的作用', '力的作用效果', '力的三要素',
   ],
   化学: [
     '化学式', '摩尔', '溶液', '沉淀', '氧化还原', '化合价', '元素周期表', '相对原子质量',
@@ -312,6 +314,9 @@ const SUBJECT_KEYWORDS = {
     '蒸腾作用', '血液循环', '神经', '反射', '生殖', '发育', 'DNA', '基因', '食物链',
     '生产者', '消费者', '分解者', '垃圾分类', '生态平衡', '消化', '吸收', '肺泡', '心脏',
     '肝脏', '肾脏', '关节', '肌肉', '神经元', '反射弧', '传粉', '受精', '种群', '环境保护',
+    // 含数学词的生物学词：加进来后「全局长词优先」会盖住数学的「平均分」，
+    // 不会再把生物题判成数学（实测「染色体…平均分配」曾被判成数学）
+    '平均分配', '细胞分裂', '细胞核', '遗传物质', '显微镜', '组织器官',
   ],
   地理: [
     '经纬度', '气候', '地形', '板块', '洋流', '季风', '热带', '温带', '寒带', '等高线',
@@ -320,6 +325,10 @@ const SUBJECT_KEYWORDS = {
     '丘陵', '沙漠', '草原', '森林', '地中海气候', '温带季风', '亚热带季风', '长江', '黄河',
     '珠江', '黄土高原', '青藏高原', '东北平原', '柴达木', '地震', '火山', '台风', '寒潮',
     '梅雨', '矿产', '钢铁', '石油', '煤炭',
+    // 初中地理常考的地貌/方位说法（原来一个都没有，导致地理题被判成语文）
+    '地势', '阶梯状', '西高东低', '地形区', '季风气候', '气温', '降水', '南北', '东西',
+    '半球', '陆地', '海洋', '四大洋', '七大洲', '经纬网', '地球运动', '自转', '公转',
+    '世界人口', '人种', '宗教', '聚落', '地域文化', '可持续发展', '生态治理',
   ],
   历史: [
     '朝代', '战争', '条约', '辛亥革命', '文艺复兴', '秦朝', '汉朝', '唐朝', '明朝', '清朝',
@@ -334,6 +343,9 @@ const SUBJECT_KEYWORDS = {
     '师生', '父母', '生命', '安全', '国家', '民族', '文化', '道德与法治', '国家利益',
     '集体利益', '个人利益', '正义', '规则', '法律', '未成年人', '劳动', '消费者',
     '合法权益', '道德修养', '孝敬', '感恩',
+    // 品德与习惯类表述（原来一个都没有，「养成好习惯」这类题会掉到语文）
+    '养成', '好习惯', '学习习惯', '品德', '责任', '遵纪守法', '文明', '亲社会',
+    '融入社会', '自觉遵守', '公共秩序', '善行', '榜样',
   ],
 }
 
@@ -706,10 +718,22 @@ export function inferSubjectFromText(text, lines = []) {
     return bag[subject]
   }
 
-  // 1) 词表命中（长词优先，避免「速度」和「加速度」重复计分）
+  // 1) 词表命中
+  //    **所有学科一起匹配**（长词优先）：否则「加速度」（物理）里的「速度」（数学）
+  //    会被当成数学特征，物理题被判成数学 —— 实测 real 档 physics 样例就栽在这。
+  const subjectOfWord = new Map()
   for (const [subject, words] of Object.entries(SUBJECT_KEYWORDS)) {
-    const slot = ensure(subject)
-    for (const h of matchPhrases(compact, words)) {
+    for (const w of words) {
+      if (!w) continue
+      if (!subjectOfWord.has(w)) subjectOfWord.set(w, [])
+      const list = subjectOfWord.get(w)
+      if (!list.includes(subject)) list.push(subject)
+    }
+  }
+  const subjectHits = matchPhrases(compact, [...subjectOfWord.keys()])
+  for (const h of subjectHits) {
+    for (const subject of subjectOfWord.get(h.word) || []) {
+      const slot = ensure(subject)
       slot.score += 1
       slot.evidence.push(h.word)
     }
@@ -726,14 +750,20 @@ export function inferSubjectFromText(text, lines = []) {
   }
 
   // 2) 特征加分
+  //    「数字多」本身**不能**说明是数学题：地理/物理/化学题里也一堆数字。
+  //    所以只有当数学自己也命中了关键词时，数字/中文数字的加成才给满，否则减半。
+  const mathKeywordHits = subjectHits.filter((h) =>
+    (subjectOfWord.get(h.word) || []).includes('数学')
+  ).length
+  const numBoost = mathKeywordHits > 0 ? 1 : 0.5
   if (feats.mathSymbolRatio >= 0.008) {
     const slot = ensure('数学')
-    slot.score += 2.2
+    slot.score += 2.2 * numBoost
     slot.evidence.push(`运算符密度 ${(feats.mathSymbolRatio * 100).toFixed(1)}%`)
   }
   if (feats.digitRatio >= 0.08) {
     const slot = ensure('数学')
-    slot.score += 1.2
+    slot.score += 1.2 * numBoost
     slot.evidence.push(`数字占比 ${(feats.digitRatio * 100).toFixed(0)}%`)
   }
 
@@ -755,6 +785,28 @@ export function inferSubjectFromText(text, lines = []) {
     }
     const unitHits = findUnitHits(compact, QUANTITY_UNITS, qtyPositions)
     const relHits = MATH_RELATION_WORDS.filter((w) => compact.includes(w))
+    // 数量关系词如果**嵌在别的学科的更长词里**（「加速度」里的「速度」），就不算数学特征。
+    // 只在「覆盖它的词更长、且那个词属于别的学科」时才排除：
+    // 单独的「速度是多少」仍然是数学题。
+    const foreignSpans = subjectHits
+      .filter((h) => (subjectOfWord.get(h.word) || []).some((s) => s !== '数学'))
+      .map((h) => [h.start, h.end, h.word.length])
+    const relHitsClean = relHits.filter((w) => {
+      const occ = []
+      let from = 0
+      for (;;) {
+        const i = compact.indexOf(w, from)
+        if (i < 0) break
+        occ.push(i)
+        from = i + 1
+      }
+      if (!occ.length) return false
+      // 只要还有一处没被别的学科的长词盖住，就算数学特征
+      return occ.some((i) => {
+        const end = i + w.length
+        return !foreignSpans.some(([s, e, len]) => i < e && end > s && len > w.length)
+      })
+    })
     const moreLess = /比.{1,8}[多少]/.test(compact)
     if (qtyHits.length && unitHits.length) {
       slot.score += 2.0
@@ -764,12 +816,12 @@ export function inferSubjectFromText(text, lines = []) {
       slot.score += 0.8
       slot.evidence.push(`数量型提问（${qtyHits[0]}）`)
     }
-    if (relHits.length || moreLess) {
-      slot.score += Math.min(1.6, 0.6 + 0.4 * (relHits.length + (moreLess ? 1 : 0)))
-      slot.evidence.push(`数量关系词（${relHits.slice(0, 3).join('、') || '比…多/少'}）`)
+    if (relHitsClean.length || moreLess) {
+      slot.score += Math.min(1.6, 0.6 + 0.4 * (relHitsClean.length + (moreLess ? 1 : 0)))
+      slot.evidence.push(`数量关系词（${relHitsClean.slice(0, 3).join('、') || '比…多/少'}）`)
     }
     if (feats.cnNumRatio >= 0.02) {
-      slot.score += 0.6
+      slot.score += 0.6 * numBoost
       slot.evidence.push(`中文数字占比 ${(feats.cnNumRatio * 100).toFixed(0)}%`)
     }
   }
