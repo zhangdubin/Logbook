@@ -34,6 +34,12 @@ import {
   fieldConfidenceFromOcr,
   fuseConfidence,
 } from './vision.js'
+import {
+  detectProblemModel,
+  buildWorkedSteps,
+  buildModelPitfalls,
+  mergeModelIntoKnowledgePoints,
+} from './problemModels.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const UPLOAD_DIR = path.join(__dirname, 'uploads')
@@ -50,6 +56,26 @@ export const ERROR_TYPE_LABEL = {
   time: '时间不足',
   careless: '粗心大意',
   expression: '书写不规范',
+}
+
+/**
+ * 服务端错误码 → 用户看得懂的一句话。
+ *
+ * MiniMax 这类服务**认证失败、余额不足、限流都返回 HTTP 200**，
+ * 真正的错误码在 body 的 `base_resp.status_code` 里（见 server/modelClient.js）。
+ * 没有这张表，用户只会看到「连接失败」，完全不知道是密钥错了还是没钱了。
+ */
+const PROVIDER_ERROR_HINT = {
+  1000: '服务端内部错误',
+  1001: '服务端超时',
+  1002: '触发限流，请稍后重试',
+  1003: '请求参数不合法',
+  1004: 'API Key 无效或已过期',
+  1008: '账户余额不足',
+  1013: '服务端内部错误',
+  1027: '输出内容被安全策略拦截',
+  1039: 'Token 数超过模型上限',
+  2013: '请求参数错误',
 }
 
 const ERROR_TYPE_DESC = {
@@ -612,7 +638,7 @@ function inferDiagnosis(input) {
     evidence.push(`本题难度为 ${difficulty}（偏难），在限时练习中容易出现"会做但没做完"`)
   }
   if (my && cor && my === cor) {
-    evidence.push('最终答案与参考答案一致，问题应出在解题过程的书写与步骤完整性上')
+    evidence.push('最终答案与参考答案一致 —— 若这题确实被扣分，扣分点多半在过程书写（步骤、单位、"答："），也可能是录入时漏记了过程')
   }
 
   // ---- 理由 ----
@@ -623,13 +649,25 @@ function inferDiagnosis(input) {
     method: `你的作答反映的解题路径与「${kpName}」的标准模型不同，说明面对这道题时思路方向就跑偏了，需要更换解法模型。`,
     time: `本题难度为 ${difficulty}，属于${kpName}中耗时较长的题型。你的作答不完整（${my ? '内容不完整' : '未作答'}），更可能是时间分配不合理，而不是不会做。`,
     careless: `答案与参考答案高度接近，问题出在细节：符号、负号、小数点或抄写环节出现了低级失误，属于可以靠检查习惯避免的失分。`,
-    expression: `你的答案与参考答案一致（或结论正确），但解题过程缺少必要的中间步骤、单位与"答："等规范书写，因此过程分被扣，属于书写不规范。`,
+    expression: `你的答案与参考答案一致，但看不到完整的解题过程。如果是过程分被扣，多半是中间步骤、单位或"答："没写全；也请确认一下过程是否真的漏记了。`,
   }
   const reason = reasons[type] ?? reasons.knowledge_gap
 
+  // 置信度：
+  //   用户自己指定了错因（input.errorType）→ 信任度高
+  //   答案一致 → 我们**看不到过程**，只能推测是书写问题，不该给高把握
+  //   答案不一致 → 证据相对充分
+  let confidence = 0.58 + (my && cor ? 0.24 : 0.1) + (input.errorType ? 0.12 : 0)
+  if (my && cor && my === cor) {
+    // 答案对上了，却说有错 —— 证据不足，把把握压下来
+    confidence = Math.min(confidence, 0.5)
+    evidence.push('说明：仅凭最终答案一致无法确定真实错因，已降低把握度，建议对照原卷确认')
+  }
+  if (!my) confidence = Math.min(confidence, 0.86)
+
   return {
     type,
-    confidence: Math.min(0.96, 0.58 + (my && cor ? 0.24 : 0.1) + (input.errorType ? 0.12 : 0)),
+    confidence: Math.min(0.96, confidence),
     reason,
     evidence,
     kpName,
@@ -710,10 +748,11 @@ function buildPracticePlan(subject, kpName, type, diagnosis) {
   return plan
 }
 
-function buildSummary(diagnosis, subject, kpName, input) {
+function buildSummary(diagnosis, subject, kpName, input, model) {
   const label = ERROR_TYPE_LABEL[diagnosis.type] ?? '知识盲点'
   const qtype = inferQuestionType(input)
-  return `这是一道${subject}${qtype}，核心考点是「${kpName}」。${label}——${diagnosis.reason}`
+  const modelPart = model && !model.ambiguous ? `模型是「${model.name}」，` : ''
+  return `这是一道${subject}${qtype}，${modelPart}核心考点是「${kpName}」。${label}——${diagnosis.reason}`
 }
 
 /**
@@ -729,8 +768,50 @@ export function localAnalyze(input = {}) {
   const kpName = diagnosis.kpName
   const label = diagnosis.label
 
+  /* ---- 认出这道题的「模型」，让建议能落到具体解法上 ---- */
+  const stemText = String(input.stem ?? '')
+  const model = detectProblemModel(stemText, subject)
+  const worked = model ? buildWorkedSteps(model, stemText) : { steps: [], computed: null, formulas: [] }
+
+  /* 知识点里把模型放前面（模型比泛化的大类更具体）。
+     mergeModelIntoKnowledgePoints 内部会做别名去重：
+     如果已有知识点已经覆盖了这个模型（如「面积与周长」覆盖了「几何面积与周长」），
+     就不重复插入，避免出现两条说的是同一件事。 */
+  const kpNames = mergeModelIntoKnowledgePoints(model, knowledgePoints)
+  const modelAdded = Boolean(model && !model.ambiguous && kpNames.includes(model.name))
+  const knowledgePointsOut = knowledgePoints.slice()
+  if (modelAdded) {
+    knowledgePointsOut.unshift({
+      name: model.name,
+      confidence: model.confidence,
+      level: '难点',
+      model: true,
+      evidence: model.evidence,
+    })
+  }
+
   const rootCauses = (ROOT_CAUSE_BANK[diagnosis.type] || ROOT_CAUSE_BANK.knowledge_gap)(kpName, input)
+  /* 模型专属的根因：比通用模板具体得多 */
+  if (model && !model.ambiguous) {
+    rootCauses.unshift(
+      `这道题属于「${model.name}」（题干依据：${model.evidence.slice(0, 2).join('、') || '关键词匹配'}）。` +
+        `如果没做对，多半是**没认出这是一道${model.name}的题**，而不是计算粗心 —— 这类题要靠"看到特征就直接套公式"来破。`,
+    )
+  }
+
   const tips = [...(TIP_BANK[diagnosis.type] || TIP_BANK.knowledge_gap)]
+  /* 模型专属的易错提醒 */
+  const modelTips = buildModelPitfalls(model)
+  if (modelTips.length) tips.unshift(...modelTips)
+  if (model && !model.ambiguous) {
+    tips.unshift(
+      `解这类题的固定套路：${model.think}`,
+      worked.computed
+        ? `按公式算一遍应该是：${worked.computed} —— 和你的答案对一下，差在哪一步就清楚了。`
+        : `用公式「${model.formula}」套一遍，再和自己的答案对照。`,
+    )
+  }
+
   const similar = SIMILAR_BANK[kpName] || genericSimilar(subject, kpName, input.difficulty)
 
   return {
@@ -738,7 +819,7 @@ export function localAnalyze(input = {}) {
     model: undefined,
     subject,
     questionType,
-    knowledgePoints,
+    knowledgePoints: knowledgePointsOut,
     diagnosis: {
       type: diagnosis.type,
       confidence: Math.round(diagnosis.confidence * 100) / 100,
@@ -746,7 +827,9 @@ export function localAnalyze(input = {}) {
       evidence: diagnosis.evidence,
     },
     rootCauses,
-    correctSteps: buildCorrectSteps(subject, kpName, diagnosis.type, input),
+    correctSteps: worked.steps.length
+      ? worked.steps
+      : buildCorrectSteps(subject, kpName, diagnosis.type, input),
     knowledgeGaps: buildKnowledgeGaps(knowledgePoints, diagnosis),
     tips,
     similarQuestions: similar.map((s) => ({
@@ -756,7 +839,7 @@ export function localAnalyze(input = {}) {
       difficulty: s.difficulty,
     })),
     practicePlan: buildPracticePlan(subject, kpName, diagnosis.type, diagnosis),
-    summary: buildSummary(diagnosis, subject, kpName, input),
+    summary: buildSummary(diagnosis, subject, kpName, input, model),
     createdAt: new Date().toISOString(),
   }
 }
@@ -971,6 +1054,26 @@ export function normalizeAnalysis(raw, base = {}) {
     title: str(s?.title, '步骤'),
     detail: str(s?.detail, ''),
   }))
+
+  /* 把本地算出的**具体算式**补给大模型的结果。
+   *
+   * 大模型给的解题步骤通常方向对，但常常是**通用话**（「列式计算」「代入公式」）；
+   * 而本地规则能从题干里抽出真实数字，算出「速度和 = 60 + 40 = 100 千米/时」
+   * 这种可对照的式子 —— 学生能拿它和自己的答案对一下，差在哪一步就清楚了。
+   *
+   * 只在「本地确实算出了具体结果」且「大模型的步骤里还没有这个数」时补一条，
+   * 避免重复。没配大模型时 fallback 本身就是这套步骤，天然一致。
+   */
+  const concrete = fallback.correctSteps.find(
+    (st) => /=\s*\d/.test(st.detail) && /÷|×/.test(st.detail),
+  )
+  if (concrete) {
+    const marker = String(concrete.detail).match(/=\s*[\d.]+/)?.[0]?.trim() ?? ''
+    const already = marker && steps.some((st) => String(st.detail ?? '').includes(marker))
+    if (!already) {
+      steps.push({ title: '对照验算', detail: concrete.detail })
+    }
+  }
 
   const similar = arr(raw.similarQuestions, fallback.similarQuestions).map((q) => ({
     stem: str(q?.stem, ''),
@@ -2284,6 +2387,16 @@ export async function testAiConnection(input = {}) {
   }
 
   const started = Date.now()
+  // 连通性测试的输出预算。
+  //
+  // ⚠️ 这里原来写的是 16 token —— **推理模型会把这 16 个 token 全花在思考上**，
+  // 最终答案一个字都没输出，content 是空串，于是报「模型返回内容为空」。
+  // MiniMax-M3.1-Flash 默认思考深度就是 max（官方文档：thinking 默认 max，
+  // 且 M3 系列不支持关闭），所以这个 16 必然踩雷。
+  //
+  // 之前用户报「配置大模型提示连接失败 / 模型返回内容为空」就是这个原因 ——
+  // 他们的 Base URL、API Key、模型名都是对的，是我们的测试把预算给小了。
+  const TEST_BUDGET = 1024
   try {
     const content = await callChat({
       cfg,
@@ -2294,7 +2407,7 @@ export async function testAiConnection(input = {}) {
       json: false,
       timeoutMs,
       temperature: 0,
-      maxTokens: 16,
+      maxTokens: TEST_BUDGET,
     })
     result.ok = true
     result.message = '连接成功，模型已响应'
@@ -2316,7 +2429,7 @@ export async function testAiConnection(input = {}) {
           json: false,
           timeoutMs,
           temperature: 0,
-          maxTokens: 16,
+          maxTokens: TEST_BUDGET,
         })
         result.detail = `视觉校验：模型回答「${String(answer).trim().slice(0, 60)}」`
       } catch (err) {
@@ -2333,9 +2446,37 @@ export async function testAiConnection(input = {}) {
     return result
   } catch (err) {
     result.ok = false
-    result.message = '连接失败'
     result.latencyMs = Date.now() - started
     result.detail = sanitizeMessage(shortError(err), apiKey)
+    // message 不要一律写「连接失败」—— 用户拿到这句话根本不知道该改什么。
+    // 按错误类型给一句人话，用户能直接照着排查。
+    const raw = String(err?.message ?? '')
+    const status = Number(err?.status ?? 0)
+    if (err?.providerCode) {
+      result.message = `连接失败：${PROVIDER_ERROR_HINT[err.providerCode] ?? '服务端返回错误'}`
+    } else if (/认证|401|unauthorized|invalid.*key/i.test(raw) || status === 401 || status === 403) {
+      result.message = '连接失败：API Key 无效或没有权限'
+      result.detail = `${result.detail}。请检查密钥是否完整（首尾空格会导致 401）、是否已过期、是否开通了对应模型权限`
+    } else if (/余额|insufficient.*balance|quota/i.test(raw)) {
+      result.message = '连接失败：账户余额不足'
+    } else if (/限流|rate.?limit|429/i.test(raw) || status === 429) {
+      result.message = '连接失败：触发了服务商限流'
+      result.detail = `${result.detail}。请稍后重试，或降低并发`
+    } else if (/超时|timeout|abort/i.test(raw)) {
+      result.message = '连接失败：请求超时'
+      result.detail = `${result.detail}。请检查网络（校园网/公司网可能拦截境外域名），或在设置里调大超时时间`
+    } else if (/模型返回内容为空|输出预算/.test(raw)) {
+      result.message = '连接失败：模型有响应，但内容为空'
+      result.detail = `${String(result.detail).replace(/[。.\s]+$/, '')}。如果这个模型是「推理模型」（会先思考），请把「最大输出长度」调大；也可以换一个不思考的模型试试`
+    } else if (/地址|baseurl|ENOTFOUND|fetch failed|ECONNREFUSED/i.test(raw)) {
+      result.message = '连接失败：连不上模型服务'
+      result.detail = `${result.detail}。请检查 Base URL 是否写全（多数兼容服务要带 /v1）、网络能不能访问这个域名`
+    } else if (/模型不存在|not found|404/i.test(raw) || status === 404) {
+      result.message = '连接失败：接口地址或模型名不对'
+      result.detail = `${result.detail}。请核对 Base URL（要带 /v1）和模型名（大小写敏感，用控制台里的原始名称）`
+    } else {
+      result.message = '连接失败'
+    }
     return result
   }
 }
