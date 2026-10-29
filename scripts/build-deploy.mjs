@@ -61,6 +61,10 @@ const SCRIPT_RE = /(^|\/)(scripts\/[^/]+\.mjs|[^/]+\.sh)$/
 const SKIP_DIRS = new Set([
   'node_modules', '.git', '.cache', '.vite', 'coverage', '.turbo',
   'backups', 'deploy-dist', 'dist-package',
+  // ⚠️ OCR 大模型（server 级检测+识别，约 190MB）—— **绝不能进部署包**。
+  //    带了会把部署包从 ~1MB 撑到 ~174MB，用户下载和拉镜像都要等很久。
+  //    模型由 ocr-service/fetch_models.py 单独下载（可选，见 ocr-service/README.md）。
+  'models',
 ])
 const SKIP_FILES = new Set([
   '.env', '.env.local', '.env.production', '.DS_Store', 'Thumbs.db',
