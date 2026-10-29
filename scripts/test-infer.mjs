@@ -21,6 +21,8 @@ import {
   inferKnowledgePoints,
   draftFromOcrLines,
   classifyOcrLines,
+  normalizeDraft,
+  assertDraftKnowledgePoints,
 } from '../server/vision.js'
 
 /* -------------------------------------------------------------------------- */
@@ -327,6 +329,95 @@ const positional = classifyOcrLines([
 ])
 console.log(`  位置信号 → 选项数 ${positional.groups.options.length}  题干 ${JSON.stringify(positional.groups.stem.map((s) => s.text))}`)
 check('位置信号识别出选项', positional.groups.options.length === 3, `实际 ${positional.groups.options.length}`)
+
+/* -------------------------------------------------------------------------- */
+/* 4.5 契约守卫：draft.knowledgePoints 必须是 string[]                          */
+/* -------------------------------------------------------------------------- */
+/*
+ * 线上事故回归：draft.knowledgePoints 一度是**对象数组**，
+ * 前端 KnowledgePointInput 直接 `{kp}` 渲染 → React 报
+ * “Objects are not valid as a React child”（minified #31），
+ * 而整个 App 没有错误边界 → 一次渲染崩溃 = 整页白屏。
+ *
+ * 契约（**故意不一样，别顺手统一**）：
+ *   draft.knowledgePoints    → string[]（前端表单填值）
+ *   analysis.knowledgePoints → 对象数组（前端「考点定位」要显示把握度与依据）
+ */
+console.log('\n=== 契约守卫：draft.knowledgePoints 必须是 string[] ===')
+
+// 4.5.1 模型路径：模型返回对象数组 -> draft 里必须变成字符串数组
+const modelRaw = {
+  subject: '语文',
+  questionType: '填空题',
+  stem: '看拼音写汉字：bàng bàng dǎng zhī，并组词造句。',
+  options: [],
+  knowledgePoints: [
+    { name: '拼音与多音字', confidence: 0.48, level: '基础', evidence: ['读音'] },
+    { name: '形近字辨析', confidence: 0.35, level: '进阶', evidence: ['字形'] },
+  ],
+  fieldConfidence: { stem: 0.9, knowledgePoints: 0.48 },
+}
+const norm = normalizeDraft(modelRaw, { fallbackSubject: '语文' })
+console.log(`  模型路径 → draft.knowledgePoints=${JSON.stringify(norm.draft.knowledgePoints)}`)
+check(
+  '模型路径：draft.knowledgePoints 每一项都是 string',
+  Array.isArray(norm.draft.knowledgePoints) && norm.draft.knowledgePoints.every((k) => typeof k === 'string'),
+  JSON.stringify(norm.draft.knowledgePoints),
+)
+eq('模型路径：知识点名字保留', norm.draft.knowledgePoints[0], '拼音与多音字')
+check(
+  '模型路径：没有空串/未定义',
+  norm.draft.knowledgePoints.every((k) => typeof k === 'string' && k.trim().length > 0),
+  JSON.stringify(norm.draft.knowledgePoints),
+)
+
+// 4.5.2 模型路径：模型给字符串（旧格式）也要正常
+const normStr = normalizeDraft({ ...modelRaw, knowledgePoints: ['古诗文默写'] }, {})
+check(
+  '模型路径（字符串格式）：draft.knowledgePoints 每一项都是 string',
+  normStr.draft.knowledgePoints.every((k) => typeof k === 'string'),
+  JSON.stringify(normStr.draft.knowledgePoints),
+)
+eq('模型路径（字符串格式）：原样保留', normStr.draft.knowledgePoints[0], '古诗文默写')
+
+// 4.5.3 纯 OCR 路径
+const ocrDraft = draftFromOcrLines(ocrLines, {})
+console.log(`  OCR 路径 → draft.knowledgePoints=${JSON.stringify(ocrDraft.draft.knowledgePoints)}`)
+check(
+  'OCR 路径：draft.knowledgePoints 每一项都是 string',
+  Array.isArray(ocrDraft.draft.knowledgePoints) && ocrDraft.draft.knowledgePoints.every((k) => typeof k === 'string'),
+  JSON.stringify(ocrDraft.draft.knowledgePoints),
+)
+check(
+  'OCR 路径：inference.knowledgePoints 仍是对象数组（analysis 用）',
+  Array.isArray(ocrDraft.inference.knowledgePoints) &&
+    ocrDraft.inference.knowledgePoints.every((k) => k && typeof k === 'object' && typeof k.name === 'string'),
+  JSON.stringify(ocrDraft.inference.knowledgePoints),
+)
+
+// 4.5.4 形状不对就抛：守卫不能静默放过对象
+const badShapes = [
+  ['对象数组', [{ name: 'x' }]],
+  ['数字', [123]],
+  ['null', [null]],
+  ['对象里没有 name', [{ foo: 'bar' }]],
+]
+for (const [label, shape] of badShapes) {
+  let threw = false
+  try {
+    assertDraftKnowledgePoints(shape)
+  } catch (e) {
+    threw = true
+  }
+  check(`守卫：${label} 必须抛错（而不是静默返回）`, threw)
+}
+let threwNonArray = false
+try {
+  assertDraftKnowledgePoints('拼音与多音字')
+} catch (e) {
+  threwNonArray = true
+}
+check('守卫：非数组必须抛错', threwNonArray)
 
 /* -------------------------------------------------------------------------- */
 /* 5. 结论                                                                     */

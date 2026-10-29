@@ -1413,7 +1413,9 @@ export function draftFromOcrLines(lines = [], ctx = {}) {
     draft: {
       subject,
       questionType,
-      knowledgePoints,
+      // draft 的知识点契约是 string[]（前端表单填值用）；
+      // 对象数组放在 inference.knowledgePoints 里，供 analysis 侧使用。
+      knowledgePoints: assertDraftKnowledgePoints(toDraftKnowledgePointNames(knowledgePoints)),
       stem,
       options,
       myAnswer: myAnswerValue,
@@ -1593,11 +1595,15 @@ export function normalizeDraft(raw = {}, ctx = {}) {
 
   const notes = r.notes ? String(r.notes) : null
 
+  // draft 的知识点契约是 string[]；对象数组是 analysis 的契约。
+  // 这里只给名字，否则前端把对象当子节点渲染 → React #31 → 整页白屏。
+  const draftKnowledgePoints = assertDraftKnowledgePoints(toDraftKnowledgePointNames(knowledgePoints))
+
   return {
     draft: {
       subject,
       questionType,
-      knowledgePoints,
+      knowledgePoints: draftKnowledgePoints,
       stem,
       options,
       myAnswer,
@@ -1610,6 +1616,40 @@ export function normalizeDraft(raw = {}, ctx = {}) {
     warnings,
     notes,
   }
+}
+
+/**
+ * 契约守卫：**draft 的知识点必须是 string[]**。
+ *
+ * 两个知识点形态是**故意不一样**的，别"顺手统一"：
+ *   - `draft.knowledgePoints`     → `string[]`（前端表单填值用）
+ *   - `analysis.knowledgePoints`  → 对象数组 `{name, confidence, level, evidence?}`
+ *     （前端「考点定位」要显示把握度与判定依据）
+ *
+ * 之前 draft 里混进了对象，前端 `KnowledgePointInput` 直接 `{kp}` 渲染成子节点，
+ * React 报 “Objects are not valid as a React child”（minified #31），
+ * 而整个 App 没有错误边界 → **一次渲染崩溃就是整页白屏**，用户只看到「自己跳到空白页」。
+ */
+export function assertDraftKnowledgePoints(knowledgePoints) {
+  if (!Array.isArray(knowledgePoints)) {
+    throw new Error(`draft.knowledgePoints 必须是 string[]，收到 ${knowledgePoints === null ? 'null' : typeof knowledgePoints}`)
+  }
+  const bad = knowledgePoints.find((k) => typeof k !== 'string')
+  if (bad !== undefined) {
+    throw new Error('draft.knowledgePoints 必须是 string[]，收到 ' + typeof bad)
+  }
+  return knowledgePoints
+}
+
+/**
+ * 对象数组 → draft 用的字符串数组（**只取 name**）。
+ * 空/非法的条目直接丢掉，避免把 undefined 塞给前端。
+ */
+function toDraftKnowledgePointNames(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((k) => (typeof k === 'string' ? k : k?.name))
+    .map((n) => String(n ?? '').trim())
+    .filter(Boolean)
 }
 
 /* -------------------------------------------------------------------------- */
