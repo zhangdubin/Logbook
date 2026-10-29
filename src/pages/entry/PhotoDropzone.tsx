@@ -187,6 +187,40 @@ export function PhotoDropzone({
         </div>
         <p className="mt-2 text-[11px] text-ink-400">{hint}</p>
 
+        {/* ------------------------------ 拍摄要点 ------------------------------
+         *
+         * 这几条不是套话，是**实测出来的**（scripts/ocr-bench）：
+         *   同样的阴影 75% / 反光 / 噪点 / 透视 / JPEG q48 压缩下，
+         *     字太小（400px 宽、约 14 像素/字）→ 字符错误率 53%、关键词命中 10/20
+         *     真实分辨率（约 1000px 宽、约 80 像素/字）→ 字符错误率 2.5%、关键词命中 18/20
+         * 也就是说：**压暗、模糊、有反光这些"看起来很糟"的因素，引擎基本都能对付；
+         * 真正致命的是字太小。** 所以第一条就是「拍近一点」。
+         */}
+        <ul className="mt-3 space-y-1.5 rounded-xl bg-ink-50/80 p-3 text-left text-[11px] leading-relaxed text-ink-600">
+          <li className="flex gap-1.5">
+            <span aria-hidden>📏</span>
+            <span>
+              <strong className="text-ink-700">拍近一点，让字占满画面</strong>
+              —— 这一条影响最大（实测字符错误率能差 20 倍）。
+              别用数字变焦，直接凑近。
+            </span>
+          </li>
+          <li className="flex gap-1.5">
+            <span aria-hidden>✂️</span>
+            <span>
+              拍完用裁剪框<strong className="text-ink-700">只留一道题</strong>
+              ，别留整页 —— 一页里挤几十行字，每行分到的像素就都不够了。
+            </span>
+          </li>
+          <li className="flex gap-1.5">
+            <span aria-hidden>💡</span>
+            <span>
+              光线均匀、避开阴影和反光（窗户、台灯的反光面）。
+              阴影和反光引擎能对付大半，但完全避开更稳。
+            </span>
+          </li>
+        </ul>
+
         <input
           ref={cameraRef}
           type="file"

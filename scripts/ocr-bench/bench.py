@@ -87,7 +87,9 @@ def main():
     ap.add_argument('--ocr-host', default=os.environ.get('OCR_HOST', 'http://127.0.0.1:8869'))
     ap.add_argument('--api-base', default=os.environ.get('API_BASE', ''))
     ap.add_argument('--cookie', default=os.environ.get('API_COOKIE', ''))
-    ap.add_argument('--tiers', default='clean,phone,hard')
+    # 'real' = 真实手机分辨率（约 1000px 宽、80 像素/字）+ 同样的退化条件，
+    # 最接近用户日常拍照；'hard' = 字小到接近信息极限的压力测试。
+    ap.add_argument('--tiers', default='clean,phone,real,hard')
     ap.add_argument('--verbose', action='store_true')
     args = ap.parse_args()
 
