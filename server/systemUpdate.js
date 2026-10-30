@@ -653,19 +653,68 @@ function permissionHint(err) {
 
   const inContainer = fs.existsSync('/.dockerenv') || String(process.env.IN_CONTAINER ?? '') === '1'
   if (inContainer) {
-    return [
-      '原因：容器以非 root 用户运行，但程序目录属主是 root，写不进去。',
-      '在**宿主机**上执行下面两条即可修复（需要重建镜像让新属主生效）：',
-      '  cd /opt/cuoti-analytics && docker compose --profile ocr up -d --build',
-      '若仍失败，说明源码目录是从宿主机挂载进去的，请在宿主机执行：',
-      '  sudo chown -R 1000:1000 /opt/cuoti-analytics',
-    ].join('\n')
+    return {
+      // 一句话结论，放在界面顶部
+      title: '程序目录不可写 —— 容器部署请在宿主机执行 docker compose --profile ocr up -d --build',
+      // 完整排查步骤，**必须保留换行**，界面会按原样显示
+      body: [
+        '原因：容器里进程是以「非 root 用户」运行的，但程序目录的属主是 root，写不进去。',
+        '',
+        '容器部署请不要用「在线更新」——',
+        '它改的是容器里的临时层，下次重建镜像就被覆盖了，等于白干。',
+        '正确做法是在「宿主机」上重建镜像（顺带把属主修正一并带上）：',
+        '',
+        '  cd /opt/cuoti-analytics && docker compose --profile ocr up -d --build',
+        '',
+        '如果上面这条还是报权限错误，说明源码目录是从宿主机挂载进去的，请在宿主机上执行：',
+        '',
+        '  sudo chown -R 1000:1000 /opt/cuoti-analytics',
+        '  cd /opt/cuoti-analytics && docker compose --profile ocr up -d --build',
+      ].join('\n'),
+    }
   }
-  return [
-    '原因：当前账号没有写入程序目录的权限。',
-    '请用有权限的账号重试，或执行：',
-    '  sudo chown -R $(whoami) /opt/cuoti-analytics',
-  ].join('\n')
+  return {
+    title: '程序目录不可写 —— 请用有权限的账号重试',
+    body: [
+      '原因：当前账号没有写入程序目录的权限。',
+      '请用有权限的账号重试，或执行：',
+      '',
+      '  sudo chown -R $(whoami) /opt/cuoti-analytics',
+    ].join('\n'),
+  }
+}
+
+/**
+ * 预检：程序目录到底能不能写。
+ *
+ * 为什么要前置：更新流程是「下载 → 解压 → 覆盖」。
+ * 如果目录不可写，用户要**等整个包下载完、解压完**，才在最后一步看到一个
+ * `EACCES: permission denied, copyfile '.../package.json' -> '/app/package.json'`。
+ * 这种错误既看不懂（到底哪个文件？为什么？）也来不及（流量已经花掉了）。
+ *
+ * 所以在**下载之前**先用「写一个临时文件再删掉」的方式探一下，
+ * 失败就直接把可执行的排查步骤抛出来。
+ *
+ * @returns {{ ok: boolean, hint?: string }}
+ */
+function preflightWriteCheck() {
+  const probe = path.join(ROOT, `.write-probe-${process.pid}-${Date.now()}`)
+  try {
+    fs.writeFileSync(probe, 'probe')
+    fs.unlinkSync(probe)
+    return { ok: true }
+  } catch (err) {
+    try { fs.unlinkSync(probe) } catch { /* 没写成就没有这个文件 */ }
+    const hint = permissionHint(err)
+    if (hint) return { ok: false, hint }
+    return {
+      ok: false,
+      hint: {
+        title: '程序目录不可写',
+        body: `程序目录不可写：${err?.message || err}`,
+      },
+    }
+  }
 }
 
 /**
@@ -774,6 +823,18 @@ export async function runUpdate() {
     }
 
     const asset = pickAsset(release)
+
+    /* ---------- 预检：程序目录能不能写（别等下载完了才失败） ---------- */
+    const probe = preflightWriteCheck()
+    if (!probe.ok) {
+      addLog('✗ 预检未通过：程序目录不可写，已中止（未下载任何文件）')
+      const err = new Error(probe.hint.title)
+      // 把排查指引挂在错误上带出去 —— catch 里要**原样**保留它的换行
+      err.updateHint = probe.hint
+      throw err
+    }
+    addLog(`预检通过：程序目录可写（${ROOT}）`)
+
     const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'cuoti-update-'))
     const tarPath = path.join(tmpDir, 'package.tar.gz')
 
@@ -875,6 +936,16 @@ export async function runUpdate() {
     }
     addLog(`版本校验通过：${previousVersion} → ${newVersion}`)
 
+    /* 容器里的更新写在**临时层**上 —— 下次重建镜像就没了。
+       这话必须说在前面，不然用户会以为「更新成功了」就万事大吉，
+       结果某次 docker compose up -d --build 之后又回到了旧版本。 */
+    const updatedInContainer =
+      fs.existsSync('/.dockerenv') || String(process.env.IN_CONTAINER ?? '') === '1'
+    if (updatedInContainer) {
+      addLog('⚠ 当前在容器里：这次更新写在容器临时层，下次「重建镜像」会被覆盖')
+      addLog('  以后更新请在宿主机执行：docker compose --profile ocr up -d --build')
+    }
+
     const history = readHistory()
     history.push({
       version: newVersion,
@@ -888,7 +959,7 @@ export async function runUpdate() {
     if (cfg.autoRestart) {
       setStatus({
         state: 'restarting',
-        message: '更新完成，1.5 秒后重启服务…',
+        message: `更新完成，1.5 秒后重启服务…${updatedInContainer ? '（容器部署：下次重建镜像会覆盖这次更新，以后请用 docker compose --profile ocr up -d --build）' : ''}`,
         progress: 100,
         newVersion,
         requiresRestart: true,
@@ -899,7 +970,7 @@ export async function runUpdate() {
     } else {
       setStatus({
         state: 'done',
-        message: '更新已完成，请重启服务后生效',
+        message: `更新已完成，请重启服务后生效${updatedInContainer ? '（容器部署：下次重建镜像会覆盖这次更新，以后请用 docker compose --profile ocr up -d --build）' : ''}`,
         progress: 100,
         newVersion,
         requiresRestart: true,
@@ -915,18 +986,25 @@ export async function runUpdate() {
     }
     return getUpdateStatus()
   } catch (err) {
-    const hint = permissionHint(err)
-    const message = sanitize(shortError(err))
-    const detail = hint ? `${message}\n\n${hint}` : message
+    // 排查指引优先用预检挂上来的那份（它带换行），否则退回到按错误码推断的
+    const hint = err?.updateHint ?? permissionHint(err)
+    const brief = sanitize(shortError(err))
+    // 原始错误压成一行（可能很长），但**指引必须原样保留换行** ——
+    // 之前 shortError 的 replace(/\s+/g,' ') 把指引拍成了一坨，用户根本没法照着做。
+    const detail = hint ? `${brief}\n\n${hint.body}` : brief
     setStatus({
       state: 'failed',
-      message: `更新失败：${detail}`,
+      message: hint ? `更新失败：${hint.title}` : `更新失败：${brief}`,
       progress: 0,
       error: detail,
       finishedAt: nowISO(),
     })
-    addLog(`✗ 更新失败：${message}`)
-    if (hint) addLog(hint)
+    addLog(`✗ 更新失败：${brief}`)
+    if (hint) {
+      for (const line of hint.body.split('\n')) {
+        if (line.trim()) addLog(line.trim())
+      }
+    }
     return getUpdateStatus()
   } finally {
     running = false
@@ -998,16 +1076,22 @@ export async function rollbackUpdate() {
     addLog(`回滚完成：当前版本 ${restored}（请重启服务）`)
     return getUpdateStatus()
   } catch (err) {
-    const hint = permissionHint(err)
-    const message = sanitize(shortError(err))
+    const hint = err?.updateHint ?? permissionHint(err)
+    const brief = sanitize(shortError(err))
+    const detail = hint ? `${brief}\n\n${hint.body}` : brief
     setStatus({
       state: 'failed',
-      message: `回滚失败：${message}`,
+      message: hint ? `回滚失败：${hint.title}` : `回滚失败：${brief}`,
       progress: 0,
-      error: message,
+      error: detail,
       finishedAt: nowISO(),
     })
-    addLog(`✗ 回滚失败：${message}`)
+    addLog(`✗ 回滚失败：${brief}`)
+    if (hint) {
+      for (const line of hint.body.split('\n')) {
+        if (line.trim()) addLog(line.trim())
+      }
+    }
     return getUpdateStatus()
   } finally {
     running = false

@@ -63,7 +63,11 @@ export function UpdateProgress({
 
       {status.state === 'failed' && status.error && (
         <AlertBox tone="error" title="更新失败">
-          <p className="break-words">{status.error}</p>
+          {/* whitespace-pre-wrap：排查指引是分行的（命令要一行一条），
+              不加的话换行会被折叠成空格，用户没法照着敲命令 */}
+          <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed">
+            {status.error}
+          </p>
         </AlertBox>
       )}
 
