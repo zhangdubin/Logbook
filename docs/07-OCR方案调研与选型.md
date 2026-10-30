@@ -726,6 +726,123 @@ npx tsc --noEmit  0 错误
 
 ---
 
+## 9. v1.1.13 修的三个线上问题
+
+> **本版不涉及识别率** —— §8 的**四档基准数字不变**（数据没变）。本版只修**三个线上问题**，但其中第一个的排查过程值得完整写下来。
+
+### 9.1 「识别后自己跳转到空白页面」—— **用户看到的现象 ≠ 技术原因**
+
+**现象**：用户说「**识别的时候自己跳到空白页面了**」。
+
+**因果链**（每一步都隔着用户看不到的技术细节）：
+
+```
+draft.knowledgePoints 契约是 string[]，实际却是对象数组
+   → 前端 KnowledgePointInput 把 {name, confidence, level, evidence} 当 React 子节点渲染
+   → React error #31「Objects are not valid as a React child」
+   → 整个 App 没有错误边界 → React 卸载整棵子树
+   → 用户看到：一片空白，且不知道发生了什么、不知道怎么回来
+```
+
+> **白屏和「知识点形状不对」之间隔着整整一条链。** 用户只会说「自己跳转了」，**排查成本极高**。
+
+**两个契约是故意不同的**（很容易被后人「顺手统一」掉）：
+
+| 字段 | 契约 | 用途 |
+| --- | --- | --- |
+| `draft.knowledgePoints` | **`string[]`** | 表单填值 |
+| `analysis.knowledgePoints` | **对象数组** `{name, confidence, level, evidence?}` | 前端「考点定位」显示把握度与判定依据 |
+
+**修法**（后端 + 前端四层 + 全局兜底）：
+
+| 层 | 做法 |
+| --- | --- |
+| **后端** | `normalizeDraft()` / `draftFromOcrLines()` 返回 draft 时**只取 name**；新增契约守卫 `assertDraftKnowledgePoints()` —— **不是字符串数组直接抛错**，不再悄悄流到前端。analysis 侧对象数组**保持不变** |
+| **前端 ①** | `src/pages/entry/kpShape.ts` —— `kpName()` / `kpNames()`（**会去重**）+ `safeText` / `safeTexts` / `asArray` |
+| **前端 ②** | 数据入口 —— `Capture.applyResult()`、`formModel.formFromQuestion()`（手动补录「编辑原题」入口，**存量对象会原样拷进去**） |
+| **前端 ③** | 组件内部 —— `KnowledgePointInput` 自己再兜一道 |
+| **前端 ④** | 渲染层 —— `AnalysisPanel` 逐行加固，**连 `key` 都改字符串** |
+| **全局兜底（最关键）** | 新增 `src/components/ErrorBoundary.tsx`，包住整个 `<Routes>` → 任何页面渲染出错都显示「页面出错了 + 你的数据没有丢 + 错误详情 + ↻ 重试」，**不再是白屏** |
+
+**补漏**：`dashboard/RecentList.tsx`、`features/review/ReviewSession.tsx` 也直接渲染了知识点对象 —— 一并加固。
+
+**存量坏数据**：那段时间后端返回对象数组，前端**原样存回了** `knowledge_points` 列 → 知识点下拉里会出现 `{"name":"小数乘法","confidence":0.5,...}` 这种文本。清洗脚本 `scripts/repair-knowledge-points.mjs`（**默认干跑**，`--apply` 才写入）：
+
+```bash
+docker exec -it cuoti-analytics node scripts/repair-knowledge-points.mjs
+docker exec -it cuoti-analytics node scripts/repair-knowledge-points.mjs --apply
+```
+
+> **【通则 ①】静默失败的危害远大于崩溃。**
+> - 形状不对时**抛错**，别悄悄流到前端；
+> - 前端消费方按「**可能是字符串、也可能是对象**」来写；
+> - **错误边界是必需品，不是可选项** —— 没有它，一次 render 异常 = 整页白屏。
+
+### 9.2 明明开了大模型，却显示「⚪️ 本地引擎」+ 假警告
+
+**根因**：前端用正则匹配后端的引擎**文案**：
+
+```ts
+const engineIsLocal = /本地|local|heuristic/i.test(engineText)
+```
+
+而文案是**复合句**：
+
+| 实际走的是 | `activeEngine` 文案 |
+| --- | --- |
+| 本地 | `本地启发式引擎 + 本地 OCR 服务（未配置可用大模型）` |
+| 大模型 | `MiniMax-M3.1-Flash@MiniMax，视觉已启用 + 本地 OCR 服务` |
+
+**两种情况都含「本地」两个字**（本地 OCR 是独立信号源，一直开着）→ 正则**永远命中** → 徽章错 + 弹一条根本不成立的「没有可用的密钥」警告。
+
+**修法**：
+
+| # | 做法 |
+| --- | --- |
+| ① | 后端新增**结构化字段** `activeEngineKind`（`'model'` \| `'local'`），引擎类型由后端明确给出，**前端不再解析文案** |
+| ② | 老后端才退回收紧后的文案正则 —— 只认「本地启发式 / local-heuristic / heuristic」，**不再匹配裸「本地」** |
+| ③ | 判定抽成 `src/features/settings/engineState.ts` **纯函数模块** + **9 个用例**自测，已接进 `npm test`（新增 npm script `test:engine`） |
+
+> **【通则 ②】让后端给结构化字段，别让前端解析文案。**
+> **文案是给人看的**，会为了「读起来更清楚」而改；**结构化字段是给机器用的**。
+> 前端一旦开始用正则猜后端语义，**后端每改一次文案就可能出一次 bug**。
+
+### 9.3 容器里在线更新报「权限不足」（EACCES）
+
+**因果链**：
+
+```
+容器里 /app 和 package.json 属主是 root
+   → 进程却以非 root 的 node 用户运行
+   → 在线更新往 /app 写文件被系统拒绝（EACCES）
+```
+
+**修法**：
+
+| # | 做法 |
+| --- | --- |
+| ① | Dockerfile：`chown node:node /app package.json package-lock.json` —— **不加 `-R`**（递归 chown 会把整个 `/app` 复制成新一层，实测凭空多 **76 MB**；只改目录自身的属主是**纯元数据操作，不复制任何文件**） |
+| ② | 后端 EACCES / EPERM 时给出**可执行的**排查步骤（容器 / 非容器两套文案），而不是干巴巴一句「权限不足」 |
+
+**顺带修正一处「界面在说假话」**：更新确认框原来写「✅ 会替换：前端 `dist/` 与后端 `server/` 的程序文件」—— **这是错的**：更新逻辑**实际把 `dist/` 整个排除**了（`EXCLUDE_DIR_NAMES`），而且**从不重新构建前端**。已照实改掉，并明确告诉用户：**容器部署要让前端也更新，必须 `docker compose up -d --build`**。
+
+> **【通则 ③】更新确认框里的每一句都必须是事实。**
+> 说假话的后果是：**用户更新完发现页面没变化 → 以为更新失败 → 反复重试**。
+
+### 9.4 本版的验收数字
+
+```
+npm test          infer 138 + model 14 + advice 43 + engine 9   全绿
+npm run smoke     107 通过 / 0 失败 / 21 跳过
+npx tsc --noEmit  0 错误
+npm run build     通过
+浏览器端到端       10/10：登录→拍照→裁剪→识别→填答案→保存→详情页→看板→复习→错题本
+                   全程无白屏、无 [object Object]、无 React 异常
+容器实测           /app 与 package.json 已是 node 属主，node 用户可写
+```
+
+---
+
 ## 附：来源清单（全部为我实际访问过的页面）
 
 **PaddleOCR 系**

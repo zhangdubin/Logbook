@@ -1,7 +1,7 @@
 {
   "name": "cuoti-analytics",
   "private": true,
-  "version": "1.1.13",
+  "version": "1.1.14",
   "description": "学生错题统计分析系统 — 面向小学/初中学生的拍照录入 + AI 智能分析 + 多维统计分析",
   "type": "module",
   "scripts": {
@@ -21,7 +21,8 @@
     "build:deploy": "node scripts/build-deploy.mjs",
     "deploy:pack": "node scripts/build-deploy.mjs",
     "deploy:publish": "node scripts/build-deploy.mjs --upload",
-    "test:engine": "node scripts/test-engine-state.mjs"
+    "test:engine": "node scripts/test-engine-state.mjs",
+    "repair:knowledge-points": "node server/repair-knowledge-points.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

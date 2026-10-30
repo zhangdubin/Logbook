@@ -33,6 +33,7 @@ import { usersRouter } from './routes/users.js'
 import { systemRouter } from './routes/system.js'
 import { isDemoMode } from './demoMode.js'
 import { ensureAdminUser, pruneExpiredSessions, requireAuth } from './auth.js'
+import { repairKnowledgePoints } from './db.js'
 import { resolveProviderConfig, describeEngineCode, describeActiveEngine } from './ai.js'
 import { appVersion } from './version.js'
 
@@ -155,6 +156,15 @@ try {
   pruneExpiredSessions()
 } catch (err) {
   console.warn('[server] 清理过期会话失败:', err?.message)
+}
+// 订正历史「知识点是对象数组」的数据（幂等；没有坏数据时零写入）
+try {
+  const { scanned, fixed } = repairKnowledgePoints()
+  if (fixed > 0) {
+    console.log(`[server] 知识点数据订正：扫描 ${scanned} 条，修正 ${fixed} 条`)
+  }
+} catch (err) {
+  console.warn('[server] 知识点数据订正失败:', err?.message)
 }
 
 const server = app.listen(PORT, HOST, () => {

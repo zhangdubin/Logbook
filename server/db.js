@@ -366,6 +366,45 @@ export function normalizeKnowledgePoints(list) {
   return out
 }
 
+/**
+ * 把库里「知识点是对象数组」的历史数据就地改正成字符串数组。
+ *
+ * 背景：有一段时间后端把 draft.knowledgePoints 改成了对象数组，
+ * 前端又把它原样存了回来，于是 knowledge_points 列里存的是对象数组。
+ * 读取时已经归一化（normalizeKnowledgePoints），所以**功能上不受影响**；
+ * 但留着不干净，导出数据或直接查库时会看到 `{"name":"…","confidence":…}`。
+ *
+ * 放在启动时自动跑一次：用户不用做任何操作。
+ * 幂等 —— 没有坏数据时一次写入都没有。
+ *
+ * @returns {{ scanned: number, fixed: number }}
+ */
+export function repairKnowledgePoints() {
+  let scanned = 0
+  let fixed = 0
+  try {
+    const rows = db.prepare('SELECT id, knowledge_points FROM questions').all()
+    scanned = rows.length
+    const upd = db.prepare('UPDATE questions SET knowledge_points = ? WHERE id = ?')
+    for (const row of rows) {
+      let raw = []
+      try {
+        raw = JSON.parse(row.knowledge_points ?? '[]')
+      } catch {
+        continue
+      }
+      if (!Array.isArray(raw)) continue
+      if (raw.every((k) => typeof k === 'string')) continue
+      upd.run(JSON.stringify(normalizeKnowledgePoints(raw)), row.id)
+      fixed += 1
+    }
+  } catch (err) {
+    console.warn('[db] 知识点数据订正失败:', err?.message)
+    return { scanned, fixed }
+  }
+  return { scanned, fixed }
+}
+
 export function mapQuestion(row, studentName) {
   if (!row) return null
   const kp = parseJSON(row.knowledge_points, [])
