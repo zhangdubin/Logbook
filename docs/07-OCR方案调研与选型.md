@@ -726,9 +726,12 @@ npx tsc --noEmit  0 错误
 
 ---
 
-## 9. v1.1.13 修的三个线上问题
+## 9. 线上问题修复（v1.1.13 ~ v1.1.14）
 
-> **本版不涉及识别率** —— §8 的**四档基准数字不变**（数据没变）。本版只修**三个线上问题**，但其中第一个的排查过程值得完整写下来。
+> **这两个版本都不涉及识别率** —— §8 的**四档基准数字不变**（数据没变）。只修**三个线上问题**，但其中第一个的排查过程值得完整写下来。
+>
+> - **v1.1.13**：三个线上问题的主体修复
+> - **v1.1.14**：补上**知识点订正脚本**（`server/repair-knowledge-points.js`）与**启动自动订正** —— v1.1.13 的部署包里**没有**这个文件
 
 ### 9.1 「识别后自己跳转到空白页面」—— **用户看到的现象 ≠ 技术原因**
 
@@ -766,12 +769,24 @@ draft.knowledgePoints 契约是 string[]，实际却是对象数组
 
 **补漏**：`dashboard/RecentList.tsx`、`features/review/ReviewSession.tsx` 也直接渲染了知识点对象 —— 一并加固。
 
-**存量坏数据**：那段时间后端返回对象数组，前端**原样存回了** `knowledge_points` 列 → 知识点下拉里会出现 `{"name":"小数乘法","confidence":0.5,...}` 这种文本。清洗脚本 `scripts/repair-knowledge-points.mjs`（**默认干跑**，`--apply` 才写入）：
+**存量坏数据**：那段时间后端返回对象数组，前端**原样存回了** `knowledge_points` 列 → 知识点下拉里会出现 `{"name":"小数乘法","confidence":0.5,...}` 这种文本。
+
+**存量坏数据不需要用户做任何操作** —— **后端启动时会自动订正一次**（`server/index.js` 调 `server/db.js` 的 `repairKnowledgePoints()`），**幂等**，没有坏数据时**零写入**：
+
+```text
+[server] 知识点数据订正：扫描 12 条，修正 3 条
+```
+
+想亲眼确认或手动执行（**命令在 `server/` 下，不在 `scripts/`** —— `scripts/` 不进镜像）：
 
 ```bash
-docker exec -it cuoti-analytics node scripts/repair-knowledge-points.mjs
-docker exec -it cuoti-analytics node scripts/repair-knowledge-points.mjs --apply
+docker exec -it cuoti-analytics node server/repair-knowledge-points.js
+# 输出：[repair] 扫描错题 N 条，需要订正 M 条
 ```
+
+> **读的时候本来就已归一化**（`normalizeKnowledgePoints`），所以**功能上一直是对的** —— 启动订正只是把库里的数据顺手弄干净，让**导出、直接查库**时不会看到对象数组文本。
+>
+> **【通则】维护工具必须放在镜像里有的目录。** 运行镜像只 COPY 了 `dist/` 和 `server/` —— 把命令行工具放在 `scripts/` 里，用户 `docker exec` 进去会发现**命令根本不存在**。**写完记得在真镜像里跑一次验证。**
 
 > **【通则 ①】静默失败的危害远大于崩溃。**
 > - 形状不对时**抛错**，别悄悄流到前端；
