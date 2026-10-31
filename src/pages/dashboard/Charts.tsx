@@ -8,7 +8,7 @@ import {
   RadarChart,
   StackedBar,
 } from '@/components/charts'
-import { ERROR_TYPE_COLOR } from '@/lib/types'
+import { errorTypeColor } from '@/lib/types'
 import type { StatsOverview } from '@/lib/types'
 import { subjectColor } from '@/lib/format'
 
@@ -29,7 +29,7 @@ export function DashboardCharts({ data }: { data: StatsOverview }) {
       data.byErrorType.map((e) => ({
         label: e.label,
         value: e.count,
-        color: ERROR_TYPE_COLOR[e.type],
+        color: errorTypeColor(e.type),
       })),
     [data.byErrorType],
   )

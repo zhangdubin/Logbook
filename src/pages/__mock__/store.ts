@@ -231,7 +231,7 @@ export const mockApi = {
         subject: found.subject,
         questionType: found.questionType,
         summary: `这道题主要错在「${found.errorDetail || '解题环节'}」，按下面的步骤订正一遍就能拿分。`,
-        diagnosisType: found.errorType,
+        diagnosisType: found.errorType || 'knowledge_gap',
         confidence: 0.72,
         reason: found.errorDetail || '结合题干与作答痕迹判断，解题环节存在偏差。',
         evidence: found.myAnswer ? [`我的答案：${found.myAnswer}`, `正确答案：${found.correctAnswer}`] : [],

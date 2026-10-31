@@ -26,7 +26,37 @@ export const ERROR_TYPES: ErrorType[] = [
   'knowledge_gap', 'misread', 'calculation', 'method', 'time', 'careless', 'expression',
 ]
 
-export const ERROR_TYPE_LABEL: Record<ErrorType, string> = {
+/**
+ * 错因可以是**空字符串**（= 未指定）。
+ *
+ * 为什么要能空：错因本来是**从作答推出来的**（`0.5` vs `1/2` 等价 → 书写不规范，
+ * `5` vs `6` → 计算失误）。但以前建题时默认填了 `knowledge_gap`，
+ * 分析逻辑 `input.errorType || inferTypeFromAnswers(...)` 就永远短路 ——
+ * **所有错因都被写死成「知识盲点」**。
+ * 所以「未指定」和「指定为知识盲点」必须能区分开。
+ *
+ * 下面的映射表因此都允许空键，读取时统一走 `errorTypeLabel()` 等helper，
+ * 不要直接下标取（那样会拿到 undefined）。
+ */
+/** 未指定错因时的展示文案（统一口径，别各处各写一份） */
+export const ERROR_TYPE_UNSET_LABEL = '错因待判断'
+/** 未指定错因时的展示颜色（灰 = 不强调） */
+export const ERROR_TYPE_UNSET_COLOR = '#94a3b8'
+
+/** 取错因名称；未指定时给统一文案，**不要**返回 undefined */
+export function errorTypeLabel(t?: string | null): string {
+  if (!t) return ERROR_TYPE_UNSET_LABEL
+  return ERROR_TYPE_LABEL[t as ErrorType] ?? ERROR_TYPE_UNSET_LABEL
+}
+
+/** 取错因颜色；未指定时给灰色 */
+export function errorTypeColor(t?: string | null): string {
+  if (!t) return ERROR_TYPE_UNSET_COLOR
+  return ERROR_TYPE_COLOR[t as ErrorType] ?? ERROR_TYPE_UNSET_COLOR
+}
+
+export const ERROR_TYPE_LABEL: Record<ErrorType | '', string> = {
+  '': ERROR_TYPE_UNSET_LABEL,
   knowledge_gap: '知识盲点',
   misread: '审题不清',
   calculation: '计算失误',
@@ -36,7 +66,8 @@ export const ERROR_TYPE_LABEL: Record<ErrorType, string> = {
   expression: '书写不规范',
 }
 
-export const ERROR_TYPE_COLOR: Record<ErrorType, string> = {
+export const ERROR_TYPE_COLOR: Record<ErrorType | '', string> = {
+  '': ERROR_TYPE_UNSET_COLOR,
   knowledge_gap: '#ef4444',
   misread: '#f59e0b',
   calculation: '#3b82f6',
@@ -46,7 +77,8 @@ export const ERROR_TYPE_COLOR: Record<ErrorType, string> = {
   expression: '#84cc16',
 }
 
-export const ERROR_TYPE_DESC: Record<ErrorType, string> = {
+export const ERROR_TYPE_DESC: Record<ErrorType | '', string> = {
+  '': '留空则由系统根据你和正确答案的差异自动判断（能识别「0.5」与「1/2」这类等价答案）。',
   knowledge_gap: '概念、公式或定理本身没有掌握，导致无法启动解题。',
   misread: '题意理解出现偏差，把题目要求理解错了。',
   calculation: '思路正确，但运算过程出错导致结果错误。',
@@ -126,8 +158,8 @@ export interface Question {
   myAnswer?: string
   /** 正确答案 */
   correctAnswer?: string
-  /** 错因类型 */
-  errorType: ErrorType
+  /** 错因类型。**空字符串 = 未指定**，此时由分析环节按作答自动推断 */
+  errorType: ErrorType | ''
   /** 错因详细描述（AI 生成或手填） */
   errorDetail?: string
   difficulty: Difficulty
@@ -153,7 +185,8 @@ export type QuestionInput = Partial<Omit<Question, 'id' | 'createdAt' | 'updated
   grade?: string
   knowledgePoints?: string[]
   questionType?: QuestionType
-  errorType?: ErrorType
+  /** 空字符串 = 未指定，由分析环节按作答自动推断 */
+  errorType?: ErrorType | ''
   stem?: string
 }
 

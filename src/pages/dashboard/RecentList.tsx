@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { Badge, Card } from '@/components/ui'
 import { kpNames } from '@/pages/entry/kpShape'
-import { ERROR_TYPE_COLOR, ERROR_TYPE_LABEL } from '@/lib/types'
+import { errorTypeColor, errorTypeLabel } from '@/lib/types'
 import { SUBJECT_BG, formatDate } from '@/lib/format'
 import type { Question } from '@/lib/types'
 
@@ -51,9 +51,9 @@ export function RecentQuestions({ items }: { items: Question[] }) {
                   <Badge tone="slate" className="gap-1">
                     <span
                       className="h-1.5 w-1.5 rounded-full"
-                      style={{ background: ERROR_TYPE_COLOR[q.errorType] }}
+                      style={{ background: errorTypeColor(q.errorType) }}
                     />
-                    {ERROR_TYPE_LABEL[q.errorType]}
+                    {errorTypeLabel(q.errorType)}
                   </Badge>
                   <Badge tone={q.mastery >= 70 ? 'green' : q.mastery >= 50 ? 'amber' : 'red'}>
                     掌握度 {q.mastery}%

@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ERROR_TYPE_COLOR, ERROR_TYPE_LABEL, REVIEW_STATUS_LABEL } from '@/lib/types'
+import { REVIEW_STATUS_LABEL, errorTypeColor, errorTypeLabel } from '@/lib/types'
 import type { Question } from '@/lib/types'
 import { DIFFICULTY_LABEL, SUBJECT_BG, formatDateTime, nextReviewDate } from '@/lib/format'
 import { AlertBox, Badge, Card, Modal, Progress, Spinner } from '@/components/ui'
@@ -133,7 +133,7 @@ export default function ItemDetail() {
   }
 
   const q = question
-  const errorColor = ERROR_TYPE_COLOR[q.errorType] ?? '#64748b'
+  const errorColor = errorTypeColor(q.errorType)
   const correctLetters = splitAnswers(q.correctAnswer)
   const myLetters = splitAnswers(q.myAnswer)
   const reviewAt = q.nextReviewAt ? new Date(q.nextReviewAt) : nextReviewDate(q.mastery)
@@ -294,7 +294,7 @@ export default function ItemDetail() {
                         boxShadow: `inset 0 0 0 1px ${errorColor}33`,
                       }}
                     >
-                      {ERROR_TYPE_LABEL[q.errorType]}
+                      {errorTypeLabel(q.errorType)}
                     </span>
                     <span className="text-xs text-ink-400">
                       难度 {DIFFICULTY_LABEL[q.difficulty] ?? q.difficulty}

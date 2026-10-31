@@ -9,8 +9,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ERROR_TYPES,
-  ERROR_TYPE_COLOR,
-  ERROR_TYPE_LABEL,
+  errorTypeColor,
+  errorTypeLabel,
   REVIEW_STATUS_LABEL,
   SUBJECTS,
 } from '@/lib/types'
@@ -298,7 +298,7 @@ export default function WrongItems() {
               <option value="">全部错因</option>
               {ERROR_TYPES.map((t) => (
                 <option key={t} value={t}>
-                  {ERROR_TYPE_LABEL[t]}
+                  {errorTypeLabel(t)}
                 </option>
               ))}
             </select>
@@ -473,7 +473,7 @@ export default function WrongItems() {
         <>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {items.map((q) => {
-              const errorColor = ERROR_TYPE_COLOR[q.errorType] ?? '#64748b'
+              const errorColor = errorTypeColor(q.errorType)
               const checked = selected.includes(q.id)
               return (
                 <article
@@ -504,7 +504,7 @@ export default function WrongItems() {
                             boxShadow: `inset 0 0 0 1px ${errorColor}33`,
                           }}
                         >
-                          {ERROR_TYPE_LABEL[q.errorType]}
+                          {errorTypeLabel(q.errorType)}
                         </span>
                         {q.corrected && <Badge tone="green">已订正</Badge>}
                       </div>

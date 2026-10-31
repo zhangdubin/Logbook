@@ -15,7 +15,8 @@ export interface QuestionFormValue {
   myAnswer: string
   correctAnswer: string
   difficulty: Difficulty
-  errorType: ErrorType
+  /** 空字符串 = 未指定，由系统按作答自动推断 */
+  errorType: ErrorType | ''
   errorDetail: string
   source: string
   points: string
@@ -44,7 +45,10 @@ export const EMPTY_FORM: QuestionFormValue = {
   myAnswer: '',
   correctAnswer: '',
   difficulty: 3,
-  errorType: 'knowledge_gap',
+  // 默认「未指定」—— 由系统按作答自动推断错因。
+  // 之前默认填 'knowledge_gap'，会让分析逻辑 `errorType || inferTypeFromAnswers()`
+  // 永远短路，所有错因都被写死成「知识盲点」。
+  errorType: '',
   errorDetail: '',
   source: '',
   points: '',
@@ -63,7 +67,7 @@ export function formFromQuestion(q: Question): QuestionFormValue {
     myAnswer: safeText(q.myAnswer),
     correctAnswer: safeText(q.correctAnswer),
     difficulty: (q.difficulty ?? 3) as Difficulty,
-    errorType: q.errorType,
+    errorType: q.errorType ?? '',
     errorDetail: safeText(q.errorDetail),
     source: q.source ?? '',
     points: q.points === undefined || q.points === null ? '' : String(q.points),
