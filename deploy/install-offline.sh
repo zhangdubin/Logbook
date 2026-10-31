@@ -118,7 +118,10 @@ if [ "$SRC_DIR" != "$INSTALL_DIR" ]; then
 fi
 PKG_DIR="$INSTALL_DIR"
 
-VERSION="$(node -e "console.log(require('$PKG_DIR/package.json').version)" 2>/dev/null || echo "1.1.15")"
+# 版本号从包里的 package.json 读。读不到就是包不完整 —— 直接报错，
+# 绝不猜一个版本号（猜错了就是「静默装错版本」，最难查）。
+VERSION="$(node -e "console.log(require('$PKG_DIR/package.json').version)" 2>/dev/null || true)"
+[ -n "$VERSION" ] || die "读不到版本号（package.json 缺失或损坏）—— 离线包不完整？"
 info "版本 ${VERSION}"
 
 docker image inspect "cuoti-analytics:${VERSION}" >/dev/null 2>&1 \

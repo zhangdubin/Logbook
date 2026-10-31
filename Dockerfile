@@ -110,10 +110,19 @@ RUN chmod 644 package.json package-lock.json \
 # 构建信息（版本号 / 提交号 / 构建时间）
 # COMMIT 传不传都行：传了就显示短 hash，没传就留空，
 # 前端会退化成只显示版本号（服务器上没有 git 也无所谓）。
-ARG VERSION=1.0.0
+#
+# VERSION **不传也能对**：从 package.json 里读。
+# 为什么要留这个兜底 —— docker-compose.yml 的 build.args.VERSION 会把
+# 环境变量 VERSION 透传进来，而那个变量可能不存在或过期（比如 .env 里没写，
+# 或者还写着 1.0.0）。如果这里只认 --build-arg，就会把**错误的版本号**
+# 烧进镜像里，页面显示的版本和实际代码对不上 —— 这种错最难查。
+#
+# 所以规则是：**VERSION 传了就用传的，没传就从 package.json 读**，两边都不会错。
+ARG VERSION=""
 ARG COMMIT=""
-RUN printf '{\n  "commit": "%s",\n  "builtAt": "%s",\n  "version": "%s"\n}\n' \
-      "${COMMIT}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${VERSION}" \
+RUN V="${VERSION:-$(node -p "require('/app/package.json').version")}" \
+ && printf '{\n  "commit": "%s",\n  "builtAt": "%s",\n  "version": "%s"\n}\n' \
+      "${COMMIT}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${V}" \
       > server/build-info.json \
  && chown node:node server/build-info.json
 

@@ -351,6 +351,11 @@ else
 # 容器内服务端口（宿主机映射用 HOST_PORT）
 PORT=${PORT}
 
+# 版本号（镜像标签与 build-info 都用它）
+# 必须写进 .env —— docker compose 的 build.args.VERSION / image 标签都读它，
+# 不写的话 compose 会退回 latest，页面显示的版本和实际代码就对不上了。
+VERSION=${VERSION}
+
 # AI 大模型配置（OpenAI 兼容接口，如 minimax / 通义 / deepseek）
 # 留空则使用内置的本地启发式引擎
 AI_BASE_URL=

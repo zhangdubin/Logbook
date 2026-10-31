@@ -19,7 +19,7 @@ name: cuoti-analytics
 services:
   app:
     # ★ 离线版用这一行（镜像来自 images/*.tar，已 docker load 进来）
-    image: cuoti-analytics:${VERSION:-1.1.15}
+    image: cuoti-analytics:${VERSION:?离线包：请在 .env 里设置 VERSION（install-offline.sh 会自动写入）}
     container_name: cuoti-analytics
     restart: unless-stopped
     ports:
@@ -59,7 +59,7 @@ services:
   # ---------------------------------------------------------------------
   ocr:
     profiles: ["ocr"]
-    image: cuoti-analytics-ocr:${VERSION:-1.1.15}
+    image: cuoti-analytics-ocr:${VERSION:?离线包：请在 .env 里设置 VERSION（install-offline.sh 会自动写入）}
     container_name: cuoti-ocr
     restart: unless-stopped
     environment:
