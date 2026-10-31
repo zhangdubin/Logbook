@@ -226,7 +226,7 @@ curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
 ```bash
 curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
   https://raw.githubusercontent.com/zhangdubin/Logbook/main/deploy/install.sh \
-  | sudo bash -s -- --repo zhangdubin/Logbook --version 1.1.15 --dir /opt/cuoti-analytics
+  | sudo bash -s -- --repo zhangdubin/Logbook --version 1.1.16 --dir /opt/cuoti-analytics
 ```
 
 安装脚本会自动完成：检查 Node 20+ → 查 GitHub Release → 下载并校验 sha256 → 安装到
@@ -237,7 +237,7 @@ curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
 
 ```bash
 sudo bash /opt/cuoti-analytics/deploy/upgrade.sh          # 升到最新版本
-sudo bash /opt/cuoti-analytics/deploy/upgrade.sh --version 1.1.15
+sudo bash /opt/cuoti-analytics/deploy/upgrade.sh --version 1.1.16
 ```
 
 升级会**保留**数据库（`server/data/`）、上传图片（`server/uploads/`）和 `.env`，
@@ -257,8 +257,32 @@ curl -s http://127.0.0.1:5181/api/version  # 当前版本号
 
 | 包 | 文件名 | 内容 | 用途 |
 | --- | --- | --- | --- |
-| 源码包 | `cuoti-analytics-v1.1.15.tar.gz` | 全部源码（不含 `dist/`） | Git 历史、二次开发 |
-| **部署版本** | `cuoti-analytics-v1.1.15-deploy.tar.gz` | 源码 + **已构建好的 `dist/`** + `deploy/` | **服务器直接跑，无需装构建工具链** |
+| 源码包 | `cuoti-analytics-v1.1.16.tar.gz` | 全部源码（不含 `dist/`） | Git 历史、二次开发 |
+| **部署版本** | `cuoti-analytics-v1.1.16-deploy.tar.gz` | 源码 + **已构建好的 `dist/`** + `deploy/` | **服务器直接跑，无需装构建工具链** |
+
+### 离线部署（服务器不能上网时）
+
+在线安装和「在线更新」都需要联网。**完全断网**的服务器用离线包：
+
+```bash
+# 有网的机器上：构建离线包（约 222 MB，含预构建好的镜像）
+bash scripts/build-offline-bundle.sh --version 1.1.16
+
+# 拷到服务器
+scp deploy-dist/cuoti-analytics-offline-v1.1.16.tar.gz user@<服务器IP>:/tmp/
+
+# 服务器上：解开并安装（全程不联网）
+sudo mkdir -p /opt && sudo tar -xzf /tmp/cuoti-analytics-offline-v1.1.16.tar.gz -C /opt
+cd /opt/cuoti-analytics-offline-v1.1.16
+sudo bash install-offline.sh --dir /opt/cuoti-analytics --port 5181 --ocr
+```
+
+离线包自带**预构建好的镜像**（`docker save` 出来的），所以服务器上
+**不需要 node、不需要 python、不需要 Docker Hub、不需要 npm/pypi 源**。
+
+断网也能用：本地 OCR 模型打包在镜像里，启发式引擎本地算 ——
+只有接大模型时才需要外网。
+
 
 详细的部署步骤、环境变量表、nginx/HTTPS 配置、回滚方法与故障排查见
 [docs/05 · 开发与部署指南](docs/05-开发与部署指南.md)。
@@ -276,8 +300,8 @@ curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
 → 生成 `.env` 与 compose 覆盖文件 → 构建镜像 → 启动容器 → 健康检查 → 打印访问地址。
 
 ```bash
-# 带参数（当前最新 1.1.15）
-sudo bash install-docker.sh --version 1.1.15 --dir /opt/cuoti-analytics --port 5181 --ocr
+# 带参数（当前最新 1.1.16）
+sudo bash install-docker.sh --version 1.1.16 --dir /opt/cuoti-analytics --port 5181 --ocr
 #   --version  指定版本（默认取最新）
 #   --dir      安装目录（默认 /opt/cuoti-analytics）
 #   --port     对外端口（默认 5181）
@@ -289,14 +313,14 @@ sudo bash install-docker.sh --version 1.1.15 --dir /opt/cuoti-analytics --port 5
 
 ```bash
 # 构建镜像（VERSION / COMMIT 会写进容器里的版本信息）
-docker build -t cuoti-analytics:1.1.15 \
-  --build-arg VERSION=1.1.15 --build-arg COMMIT=HEAD .
+docker build -t cuoti-analytics:1.1.16 \
+  --build-arg VERSION=1.1.16 --build-arg COMMIT=HEAD .
 
 # 直接跑
 docker run -d --name cuoti -p 5181:5181 \
   -v cuoti-data:/app/server/data \
   -v cuoti-uploads:/app/server/uploads \
-  cuoti-analytics:1.1.15
+  cuoti-analytics:1.1.16
 
 # 或者用 compose
 docker compose up -d                          # 只起应用
