@@ -17,6 +17,7 @@ import {
   resetAiSettings,
 } from '../settings.js'
 import { resolveProviderConfig, describeActiveEngine, describeActiveEngineKind, testAiConnection } from '../ai.js'
+import { probeOcrService } from '../ocr.js'
 import { requireAuth, requirePermission } from '../auth.js'
 
 const router = Router()
@@ -77,6 +78,84 @@ router.post('/ai/test', requirePermission('settings:ai'), async (req, res) => {
       latencyMs: 0,
       vision: false,
       detail: `连接失败：${err?.message ?? '未知错误'}`,
+    })
+  }
+})
+
+/* ------------------------- 本地 OCR 服务健康自检 ------------------------- */
+/**
+ * **为什么必须由后端探测，而不能让浏览器自己连？**
+ *
+ * Docker 部署时 OCR 侧车的地址是 `http://cuoti-ocr:8868` —— 那是 **Docker 内部网络**
+ * 里的容器名，**浏览器根本解析不了**（浏览器跑在宿主机或用户手机上，不在 Docker 网络里）。
+ *
+ * 所以前端自己做直连检测的结果**永远是「连不上」**，哪怕服务好好地在跑、
+ * 后端拍照识别也真的走通了。用户看到的就是「我明明启用了，为什么说没启用」。
+ *
+ * 后端在容器内，能连到 `cuoti-ocr` ✓。所以真相只能由后端给。
+ *
+ * 返回：
+ *   reachable   后端探到没有（这才是真相）
+ *   engine      服务自报的引擎名（rapidocr / paddleocr…）
+ *   detail      原始响应或失败原因 —— 界面要能展开看，用户才排查得动
+ *   latencyMs   探测耗时 —— 「142ms」是「真的在跑」的强信号
+ *   configured  有没有配地址（区分「没配」和「配了但连不上」）
+ */
+router.get('/ocr-health', requireAuth, async (_req, res) => {
+  const cfg = resolveProviderConfig()
+  const baseUrl = String(cfg.ocrBaseUrl ?? '').trim()
+  const configured = Boolean(baseUrl)
+
+  if (!configured) {
+    res.json({
+      reachable: false,
+      engine: null,
+      detail: '未配置本地 OCR 服务地址',
+      latencyMs: null,
+      configured: false,
+      baseUrl: '',
+      checkedAt: new Date().toISOString(),
+    })
+    return
+  }
+
+  const started = Date.now()
+  try {
+    const probe = await probeOcrService({ baseUrl, timeoutMs: 8000 })
+    const latencyMs = Date.now() - started
+    // 服务自报的引擎名要从响应里抠出来（/health 返回的是 JSON 字符串）
+    let engine = null
+    try {
+      const parsed = JSON.parse(probe.detail)
+      if (parsed && typeof parsed === 'object') {
+        for (const key of ['engine', 'ocr_engine', 'backend', 'model', 'name']) {
+          if (typeof parsed[key] === 'string' && parsed[key].trim()) {
+            engine = parsed[key].trim()
+            break
+          }
+        }
+      }
+    } catch {
+      /* 不是 JSON（老服务可能直接回纯文本），引擎名取不到就算了 */
+    }
+    res.json({
+      reachable: Boolean(probe.reachable),
+      engine,
+      detail: probe.detail,
+      latencyMs,
+      configured: true,
+      baseUrl,
+      checkedAt: new Date().toISOString(),
+    })
+  } catch (err) {
+    res.json({
+      reachable: false,
+      engine: null,
+      detail: `探测失败：${String(err?.message ?? err).slice(0, 160)}`,
+      latencyMs: Date.now() - started,
+      configured: true,
+      baseUrl,
+      checkedAt: new Date().toISOString(),
     })
   }
 })

@@ -22,7 +22,8 @@ import { fileURLToPath } from 'node:url'
 import { readStoredAiConfig } from './settings.js'
 import { getPreset, guessProviderByBaseUrl, resolveVisionSupport } from './providers.js'
 import { callChat, sanitizeMessage, RED_PIXEL_DATA_URL } from './modelClient.js'
-import { OCR_TIMEOUT_MS, runLocalOcr, probeOcrService } from './ocr.js'
+import { OCR_TIMEOUT_MS, runLocalOcr, probeOcrService, preprocessImage } from './ocr.js'
+import { attachFigures } from './solutionFigure.js'
 import {
   recognizeWithVision,
   recognizeFromOcrText,
@@ -33,6 +34,11 @@ import {
   inferQuestionTypeFromText,
   fieldConfidenceFromOcr,
   fuseConfidence,
+  refineDraft,
+  findLowConfidenceFields,
+  crossCheckDraft,
+  areAnswersEquivalent,
+  extractNumbers,
 } from './vision.js'
 import {
   detectProblemModel,
@@ -503,6 +509,18 @@ function normAnswer(s) {
     .toLowerCase()
 }
 
+/**
+ * 取答案里第一个数值的**单位**（'12cm' → 'cm'，'12' → ''，'12 厘米' → '厘米'）。
+ *
+ * 用来区分两种「数值相同」的情况：
+ *   12 vs 12cm  → 单位**缺失**   → 书写不规范
+ *   12cm vs 12m → 单位**换算错** → 是真错，不能放过
+ */
+function answerUnit(text) {
+  const list = extractNumbers(text)
+  return list.length ? String(list[0].unit ?? '') : ''
+}
+
 /** 从题干中提取一个"关键片段"，用于生成根因描述 */
 function keywordOf(stem, kp) {
   if (kp) return kp
@@ -622,7 +640,17 @@ function inferDiagnosis(input) {
   const kpName = kps[0]?.name ?? '本题知识点'
   const evidence = []
 
-  const type = input.errorType || inferTypeFromAnswers({ my, cor, difficulty, qtype })
+  // 等价判定要用**原始**作答（areAnswersEquivalent 自己会归一化）——
+  // 归一化过的字符串会把「1/2」和「0.5」的差别提前抹掉或提前引入。
+  const type = input.errorType || inferTypeFromAnswers({
+    my,
+    cor,
+    difficulty,
+    qtype,
+    subject: input.subject,
+    rawMy: input.myAnswer,
+    rawCor: input.correctAnswer,
+  })
   const label = ERROR_TYPE_LABEL[type] ?? '知识盲点'
 
   // ---- 证据收集 ----
@@ -682,11 +710,23 @@ function inferDiagnosis(input) {
   }
 }
 
-function inferTypeFromAnswers({ my, cor, difficulty, qtype }) {
+function inferTypeFromAnswers({ my, cor, difficulty, qtype, subject, rawMy, rawCor }) {
   // 完全空白 / 答非所问 -> 知识盲点
   if (!my) return 'knowledge_gap'
   if (cor && my === cor) return 'expression'
   if (cor) {
+    /* **数学等价判定**（借鉴 SymPy 的思路，纯 JS 实现，不加依赖）
+     *
+     * 为什么这一步最关键：只做字符串比对的话，学生写 `0.5`、标准答案写 `1/2`，
+     * 会被判成「计算失误 / 方法不当」—— **错因直接给错**，
+     * 而学生明明做对了。这正是用户说的「纠错不准」：
+     * 判错错因比判错答案更伤信任。
+     *
+     * 覆盖：1/2 ≡ 0.5 ≡ 50%；3:4 ≡ 0.75；2(x+1) ≡ 2x+2。
+     * **单位不同不等价**（12cm ≢ 12m）—— 那个是真错，不能放过。
+     */
+    if (areAnswersEquivalent(rawMy ?? my, rawCor ?? cor, subject)) return 'expression'
+
     const myNoSign = my.replace(/[+\-−]/g, '')
     const corNoSign = cor.replace(/[+\-−]/g, '')
     // 仅差符号 -> 粗心大意
@@ -700,7 +740,15 @@ function inferTypeFromAnswers({ my, cor, difficulty, qtype }) {
       return diff / base < 0.35 ? 'calculation' : 'method'
     }
     // 数值一致但单位/书写缺失 -> 书写不规范
-    if (dMy && dCor && stripNonDigits(my) === stripNonDigits(cor)) return 'expression'
+    if (dMy && dCor && stripNonDigits(my) === stripNonDigits(cor)) {
+      const uMy = answerUnit(my)
+      const uCor = answerUnit(cor)
+      // ⚠️ 两边**单位都写了但不一样**（12cm vs 12m）→ 这是**单位换算错**，是真错。
+      // 不能按「书写不规范」放过 —— 那等于告诉学生「你对了，只是没写单位」。
+      if (uMy && uCor && uMy !== uCor) return 'calculation'
+      // 一边有单位一边没有（12 vs 12cm）→ 确实是书写/单位缺失
+      return 'expression'
+    }
     // 英语单词/词形错误：短的是长的前缀 -> 词形变化规则没掌握
     if (/^[a-zA-Z]+$/.test(my) && /^[a-zA-Z]+$/.test(cor)) {
       const [short, long] = my.length <= cor.length ? [my, cor] : [cor, my]
@@ -834,9 +882,17 @@ export function localAnalyze(input = {}) {
       evidence: diagnosis.evidence,
     },
     rootCauses,
-    correctSteps: worked.steps.length
-      ? worked.steps
-      : buildCorrectSteps(subject, kpName, diagnosis.type, input),
+    // 本地路径也要配图 —— 否则「没配 AI 模型」的用户就享受不到 SVG 动画
+    correctSteps: attachFigures(
+      worked.steps.length ? worked.steps : buildCorrectSteps(subject, kpName, diagnosis.type, input),
+      {
+        subject,
+        stem: input.stem ?? '',
+        correctAnswer: input.correctAnswer ?? '',
+        myAnswer: input.myAnswer ?? '',
+        questionType: input.questionType ?? '',
+      },
+    ),
     knowledgeGaps: buildKnowledgeGaps(knowledgePoints, diagnosis),
     tips,
     similarQuestions: similar.map((s) => ({
@@ -1082,6 +1138,20 @@ export function normalizeAnalysis(raw, base = {}) {
     detail: str(s?.detail, ''),
   }))
 
+  /* 给每一步配一张 SVG 示意图。
+   *
+   * 图形是**确定性推导**出来的（server/solutionFigure.js），不是让模型画 ——
+   * 模型画图会飘、会错、每次不一样；推导不出来就**不配图**，
+   * 宁可少一张也不要给一张错的图。
+   */
+  const stepsWithFigure = attachFigures(steps, {
+    subject: fallback.subject,
+    stem: fallback.stem,
+    correctAnswer: fallback.correctAnswer,
+    myAnswer: fallback.myAnswer,
+    questionType: fallback.questionType,
+  })
+
   /* 把本地算出的**具体算式**补给大模型的结果。
    *
    * 大模型给的解题步骤通常方向对，但常常是**通用话**（「列式计算」「代入公式」）；
@@ -1129,7 +1199,13 @@ export function normalizeAnalysis(raw, base = {}) {
       evidence: arr(diagRaw.evidence, fallback.diagnosis.evidence).map((e) => str(e, '')).filter(Boolean),
     },
     rootCauses: arr(raw.rootCauses, fallback.rootCauses).map((r) => str(r, '')).filter(Boolean),
-    correctSteps: steps.length ? steps : fallback.correctSteps,
+    correctSteps: steps.length ? stepsWithFigure : attachFigures(fallback.correctSteps, {
+      subject: fallback.subject,
+      stem: fallback.stem,
+      correctAnswer: fallback.correctAnswer,
+      myAnswer: fallback.myAnswer,
+      questionType: fallback.questionType,
+    }),
     knowledgeGaps: arr(raw.knowledgeGaps, fallback.knowledgeGaps).map((g) => str(g, '')).filter(Boolean),
     tips: arr(raw.tips, fallback.tips).map((t) => str(t, '')).filter(Boolean),
     similarQuestions: similar.length ? similar : fallback.similarQuestions,
@@ -1329,6 +1405,32 @@ export async function analyzePhoto(input = {}) {
     }
   }
 
+  /* ---------------- 2b. 预处理增强图（喂给视觉模型看） ----------------
+   *
+   * 为什么这是**准确率最大的一杠杆**：
+   * 侧车一直在做 EXIF 矫正 + 尺寸归一化 + LAB-CLAHE 对比度增强，
+   * 但这些成果**原来只有 OCR 用得到** —— 视觉模型吃的是**原始手机照片**，
+   * 阴影、书页弯曲、透视倾斜全都还在。
+   *
+   * 实测（bench 10 张 real+hard）：平均 CER **36.45% → 29.30%**。
+   * 用 LAB 空间而不是灰度，是为了**保住颜色** —— 模型要靠颜色区分
+   * 「红笔作答」和「印刷体」，灰度化会把红笔变成深灰块，反而读不出来。
+   *
+   * 失败就退回原图（preprocessImage 任何异常都返回 null），绝不让整条链路挂掉。
+   */
+  let enhancedImage = null
+  if (cfg.ocrEnabled && cfg.ocrBaseUrl && imageBase64) {
+    enhancedImage = await preprocessImage({
+      baseUrl: cfg.ocrBaseUrl,
+      imageBase64,
+      // 纯图像运算，实测 <100ms；不用给大超时
+      timeoutMs: 20000,
+    })
+    if (!enhancedImage) {
+      warnings.push('图片预处理不可用，视觉模型将直接看原图')
+    }
+  }
+
   /* ---------------- 3. 视觉模型识别 ---------------- */
   let recognized = null
   let usedVisionModel = false
@@ -1342,6 +1444,8 @@ export async function analyzePhoto(input = {}) {
         recognized = await recognizeWithVision({
           cfg,
           imageSrc,
+          // 有增强图就用增强图（模型看增强图比看原图准得多）
+          enhancedImage,
           hint,
           grade: input.grade,
           subject: input.subject,
@@ -1417,6 +1521,71 @@ export async function analyzePhoto(input = {}) {
     // 没有视觉模型时，用 OCR 的逐行 rec_scores 派生**逐字段置信度**（前端高亮用）
     fieldConfidence = fieldConfidenceFromOcr(ocrDraft.groups, { stem: draft.stem })
     // 注意：此时**没有模型**，modelSelf 信号不参与融合
+  }
+
+  /* ---------------- 4b. 低置信字段定向校正（第二遍） ----------------
+   *
+   * 第一遍模型只输出一次就结束了，**从不回头检查自己** —— 识别错的字段没人发现。
+   * 这一步把「低置信字段 + OCR 原文 + 图片」回灌模型做**定向校正**。
+   *
+   * 两个前提（少一个就不做）：
+   *   1. 必须**有视觉模型** —— 没模型就没什么可校正的；
+   *   2. 必须**有 OCR 原文** —— 校验需要「锚点」。没 OCR 时模型只能纯猜，
+   *      第二遍很可能把对的改错。
+   *
+   * 采纳有安全阀：只有能验证「确实变好了」的校正才采纳，其余保留第一遍的值。
+   */
+  let refinement = null
+  const lowFields = findLowConfidenceFields({
+    draft: draft ?? localDraft,
+    fieldConfidence: fieldConfidence ?? {},
+    ocrText: ocr?.text ?? '',
+  })
+  if (recognized && lowFields.length && ocr?.text) {
+    try {
+      refinement = await refineDraft({
+        cfg,
+        draft,
+        fieldConfidence: fieldConfidence ?? {},
+        ocrText: ocr.text,
+        // 第二遍也带图（增强图优先）—— 不带图的话模型是在纯猜
+        imageSrc: enhancedImage || imageSrc,
+        lowConfidenceFields: lowFields.map((f) => f.field),
+      })
+      if (refinement?.improved && Array.isArray(refinement.corrections) && refinement.corrections.length) {
+        for (const c of refinement.corrections) {
+          if (c.field === 'options') {
+            draft.options = Array.isArray(c.to) ? c.to : String(c.to).split('|')
+          } else if (c.field in draft) {
+            draft[c.field] = c.to
+          }
+        }
+        warnings.push(`已复核并修正低置信字段：${refinement.corrections.map((c) => c.field).join('、')}`)
+      }
+    } catch (err) {
+      // 校正失败**不是错误** —— 第一遍的结果照常用
+      warnings.push(`低置信字段复核未完成，保留首次识别结果（${shortError(err)}）`)
+    }
+  }
+
+  /* ---------------- 4c. OCR ↔ 模型交叉核对 ----------------
+   *
+   * OCR 和视觉模型是两个**独立**的信号源，代码里从来没让它们互相验证过。
+   * 这里只**报告冲突**，**不自动改 draft** ——
+   * 万一 OCR 自己错了，自动替换反而会把模型对的覆盖成错的。
+   * 冲突交给用户看：让用户知道「这里两个引擎不一致，我保留了哪个」。
+   */
+  let cross = null
+  if (draft && ocr?.text) {
+    try {
+      cross = crossCheckDraft({
+        draft,
+        ocrText: ocr.text,
+        fieldConfidence: fieldConfidence ?? {},
+      })
+    } catch {
+      cross = null   // 纯函数不该失败；失败就当没这回事
+    }
   }
 
   const finalDraft = draft ?? localDraft
@@ -1555,6 +1724,40 @@ export async function analyzePhoto(input = {}) {
       signals,
       warnings,
       ...(layoutPenalty !== 1 ? { layoutPenalty } : {}),
+      /* ---- AI 辅助的可解释信息 ----
+       *
+       * 用户说「ai 辅助的也不明显」—— 根子是**界面上看不见 AI 干了什么**。
+       * 这一块把「这次识别是怎么做出来的」摊开给前端：
+       * 哪些字段来自模型、哪些来自本地 OCR、有没有做第二遍自校验、
+       * 两个引擎哪里不一致（以及我们保留了哪个）。
+       */
+      aiAssist: {
+        usedModel: Boolean(usedVisionModel || usedTextModel),
+        engineKind: usedVisionModel || usedTextModel ? 'model' : 'local',
+        modelName: usedVisionModel
+          ? `${cfg.provider}:${cfg.visionModelEffective || cfg.model}`
+          : usedTextModel ? `${cfg.provider}:${cfg.model}` : undefined,
+        // 字段来源：模型路径下大部分字段来自模型，OCR 路径下全部来自 OCR
+        fieldsFromModel: usedVisionModel || usedTextModel
+          ? ['stem', 'options', 'myAnswer', 'correctAnswer', 'knowledgePoints']
+          : [],
+        fieldsFromOcr: ocr?.text ? ['ocrText'] : [],
+        // 第二遍自校验
+        secondPass: Boolean(refinement?.improved),
+        selfChecked: Boolean(cross),
+        // 视觉模型看的是不是增强图
+        enhancedImage: Boolean(enhancedImage),
+        enhancedVariant: enhancedImage?.variant,
+        // 两遍识别之间做了什么修正
+        ...(refinement?.corrections?.length
+          ? { corrections: refinement.corrections }
+          : {}),
+        // 被安全阀拒绝的修正（保留第一遍的值）—— 让人知道「模型提了但我们没采纳」
+        ...(refinement?.rejected?.length ? { rejected: refinement.rejected } : {}),
+        // OCR ↔ 模型冲突（**只报告，不自动改**）
+        ...(cross?.conflicts?.length ? { conflicts: cross.conflicts } : {}),
+        ...(cross?.agreement !== undefined ? { agreement: cross.agreement } : {}),
+      },
     },
   }
   return response

@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS questions (
   options        TEXT NOT NULL DEFAULT '[]',
   my_answer      TEXT,
   correct_answer TEXT,
-  error_type     TEXT NOT NULL DEFAULT 'knowledge_gap',
+  error_type     TEXT NOT NULL DEFAULT '',   -- 空 = 未指定，由分析环节推断
   error_detail   TEXT,
   difficulty     INTEGER NOT NULL DEFAULT 3,
   points         REAL,

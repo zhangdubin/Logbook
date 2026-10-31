@@ -12,6 +12,7 @@ import { ERROR_TYPE_COLOR, ERROR_TYPE_LABEL, REVIEW_STATUS_LABEL } from '@/lib/t
 import type { Question } from '@/lib/types'
 import { DIFFICULTY_LABEL, SUBJECT_BG, formatDateTime, nextReviewDate } from '@/lib/format'
 import { AlertBox, Badge, Card, Modal, Progress, Spinner } from '@/components/ui'
+import { MathText } from '@/components/MathText'
 import { useToast } from '@/store/toast'
 import { AnalysisPanel } from './entry/AnalysisPanel'
 import { kpNames } from './entry/kpShape'
@@ -210,7 +211,12 @@ export default function ItemDetail() {
               <div>
                 <p className="label">题干</p>
                 <p className="whitespace-pre-wrap rounded-xl bg-ink-50/70 p-3 text-sm leading-relaxed text-ink-800">
-                  {q.stem || '（未填写题干）'}
+                  {/* 数学公式用 KaTeX 渲染 —— 否则学生看到的是 $x^2$ 这种源码 */}
+                  {q.stem ? (
+                    <MathText text={q.stem} />
+                  ) : (
+                    '（未填写题干）'
+                  )}
                 </p>
               </div>
 

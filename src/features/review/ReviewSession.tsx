@@ -5,6 +5,7 @@ import { useApp } from '@/store/app'
 import { useToast } from '@/store/toast'
 import type { Question } from '@/lib/types'
 import { AlertBox, Badge, Card, EmptyState, Progress, Spinner } from '@/components/ui'
+import { MathText } from '@/components/MathText'
 import { kpNames } from '@/pages/entry/kpShape'
 import { DIFFICULTY_LABEL, subjectColor } from '@/lib/format'
 
@@ -240,7 +241,10 @@ export function ReviewSession() {
         </div>
 
         {/* 题干 */}
-        <p className="whitespace-pre-wrap text-[15px] leading-7 text-ink-800">{current.stem}</p>
+        {/* 公式用 KaTeX 渲染，否则复盘时看到的是 $x^2$ 这样的源码 */}
+        <p className="whitespace-pre-wrap text-[15px] leading-7 text-ink-800">
+          <MathText text={current.stem} />
+        </p>
 
         {/* 选项 */}
         {current.options?.length ? (

@@ -22,12 +22,14 @@
     "deploy:pack": "node scripts/build-deploy.mjs",
     "deploy:publish": "node scripts/build-deploy.mjs --upload",
     "test:engine": "node scripts/test-engine-state.mjs",
-    "repair:knowledge-points": "node server/repair-knowledge-points.js"
+    "repair:knowledge-points": "node server/repair-knowledge-points.js",
+    "test:figure": "node scripts/test-solution-figure.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "exceljs": "^4.4.0",
     "express": "^5.3.0",
+    "katex": "^0.16.11",
     "multer": "^2.5.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -37,6 +39,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
+    "@types/katex": "^0.16.7",
     "@types/multer": "^2.0.0",
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",

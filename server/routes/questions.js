@@ -157,7 +157,17 @@ router.post('/', requirePermission('questions:create'), (req, res) => {
     JSON.stringify(options),
     bindable(body.myAnswer),
     bindable(body.correctAnswer),
-    body.errorType ? String(body.errorType) : 'knowledge_gap',
+    // ⚠️ 默认**留空**（= 未指定），不要默认填 'knowledge_gap'。
+    //
+    // 原因：错因判定是**从作答推出来的**（inferTypeFromAnswers）——
+    // 学生写 0.5、答案 1/2（等价）该判「书写不规范」，
+    // 写 5、答案 6（差一位）该判「计算失误」。
+    // 但分析逻辑是 `input.errorType || inferTypeFromAnswers(...)`，
+    // 一旦这里默认填了 'knowledge_gap'，那个「||」就永远短路 ——
+    // **所有错因都被写死成「知识盲点」**，判定逻辑形同虚设。
+    //
+    // 「未指定」和「指定为知识盲点」是两回事，必须能区分开。
+    body.errorType ? String(body.errorType) : '',
     bindable(body.errorDetail),
     Number(body.difficulty ?? 3) || 3,
     body.points === undefined || body.points === null ? null : Number(body.points),
