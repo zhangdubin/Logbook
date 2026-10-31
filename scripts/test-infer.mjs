@@ -23,7 +23,16 @@ import {
   classifyOcrLines,
   normalizeDraft,
   assertDraftKnowledgePoints,
+  areAnswersEquivalent,
+  normalizeAnswerText,
+  normalizeOptionLetter,
+  normalizeOptionText,
+  extractNumbers,
+  crossCheckDraft,
+  findLowConfidenceFields,
+  refineDraft,
 } from '../server/vision.js'
+import { preprocessImage } from '../server/ocr.js'
 
 /* -------------------------------------------------------------------------- */
 /* 断言小工具                                                                   */
@@ -420,7 +429,328 @@ try {
 check('守卫：非数组必须抛错', threwNonArray)
 
 /* -------------------------------------------------------------------------- */
-/* 5. 结论                                                                     */
+/* 5. 答案等价判定（纠错准确率的核心）                                           */
+/* -------------------------------------------------------------------------- */
+console.log('\n=== 答案等价判定（areAnswersEquivalent）===')
+
+const EQ_CASES = [
+  // [a, b, 学科, 期望等价]
+  ['1/2', '0.5', '数学', true],
+  ['0.5', '1/2', '数学', true],
+  ['50%', '0.5', '数学', true],
+  ['1/2', '50%', '数学', true],
+  ['3:4', '0.75', '数学', true],
+  ['2(x+1)', '2x+2', '数学', true],
+  ['x+1', '1+x', '数学', true],
+  ['12cm', '12cm', '数学', true],
+  ['12 cm', '12cm', '数学', true],
+  ['007', '7', '数学', true],
+  ['0.50', '0.5', '数学', true],
+  ['Ａ', 'A', '数学', true],
+  ['（A）', 'A', '数学', true],
+  ['A.', 'A', '数学', true],
+  // 不等价
+  ['12cm', '12m', '数学', false],
+  ['1/2', '1/3', '数学', false],
+  ['0.5', '0.6', '数学', false],
+  ['A', 'B', '数学', false],
+  ['walk', 'walked', '英语', false],
+  ['', 'A', '数学', false],
+  ['A', '', '数学', false],
+]
+for (const [a, b, subject, expected] of EQ_CASES) {
+  const got = areAnswersEquivalent(a, b, subject)
+  eq(`等价 ${JSON.stringify(a)} vs ${JSON.stringify(b)}(${subject})`, got, expected)
+}
+
+// 单位不同必须是两个量
+check('单位不同不等价（12cm vs 12m）', areAnswersEquivalent('12cm', '12m') === false)
+check('非数学学科不做代数式等价', areAnswersEquivalent('ab', 'a*b', '英语') === false)
+
+console.log('  --- normalizeAnswerText ---')
+const NORM_CASES = [
+  ['Ａ', 'A'],
+  ['（Ａ）', 'A'],
+  ['A.', 'A'],
+  ['  12 cm ', '12cm'],
+  ['0.50', '0.5'],
+  ['3.0', '3'],
+  ['007', '7'],
+  ['答：C', 'C'],
+  ['答案：B。', 'b'],
+  ['  １２３  ', '123'],
+]
+for (const [input, expected] of NORM_CASES) {
+  eq(`归一 ${JSON.stringify(input)}`, normalizeAnswerText(input), expected)
+}
+eq('归一：选项字母（大写）', normalizeOptionLetter('（b）'), 'B')
+eq('归一：不是字母返回空', normalizeOptionLetter('12厘米'), '')
+eq('归一：选项内容去前缀', normalizeOptionText('A. 12 厘米'), '12厘米')
+
+console.log('  --- extractNumbers ---')
+eq('抽数值带单位', JSON.stringify(extractNumbers('12cm')), JSON.stringify([{ value: 12, unit: 'cm' }]))
+eq('抽多个数值', extractNumbers('3米5厘米').length, 2)
+eq('百分号不算单位', extractNumbers('50%')[0].unit, '')
+
+/* -------------------------------------------------------------------------- */
+/* 6. 交叉核对 + 低置信字段 + 预处理降级                                          */
+/* -------------------------------------------------------------------------- */
+console.log('\n=== 交叉核对（crossCheckDraft）===')
+
+const CROSS_OCR = [
+  '3.小明有24颗糖，给了小红一半，又买来8颗。小明现在有多少颗糖？',
+  'A. 12 B. 16 C. 20 D. 24',
+].join('\n')
+const CROSS_STEM = '3.小明有24颗糖，给了小红一半，又买来8颗。小明现在有多少颗糖？'
+
+// 6.1 两边一致 -> 没有冲突
+{
+  const r = crossCheckDraft({
+    draft: { stem: CROSS_STEM, options: ['12', '16', '20', '24'], myAnswer: 'C', subject: '数学' },
+    ocrText: CROSS_OCR,
+    fieldConfidence: { stem: 0.92, options: 0.88, myAnswer: 0.8 },
+  })
+  eq('一致时无冲突', r.conflicts.length, 0)
+  eq('一致时 agreement=1', r.agreement, 1)
+}
+
+// 6.2 模型漏选项 -> 冲突并采信 OCR
+{
+  const r = crossCheckDraft({
+    draft: { stem: CROSS_STEM, options: ['12', '16', '20'], myAnswer: 'C', subject: '数学' },
+    ocrText: CROSS_OCR,
+    fieldConfidence: { stem: 0.9, options: 0.6 },
+  })
+  eq('漏选项要报冲突', r.conflicts.length, 1)
+  eq('漏选项时采信 OCR', r.conflicts[0].chosen, 'ocr')
+  eq('漏选项的字段是 options', r.conflicts[0].field, 'options')
+  check('冲突要带理由', typeof r.conflicts[0].reason === 'string' && r.conflicts[0].reason.length > 0)
+}
+
+// 6.3 答案冲突 -> 冲突并按置信度择优
+{
+  const r = crossCheckDraft({
+    draft: { stem: CROSS_STEM, options: ['12', '16', '20', '24'], myAnswer: 'B', subject: '数学' },
+    ocrText: `${CROSS_OCR}\n答：C`,
+    fieldConfidence: { stem: 0.9, options: 0.85, myAnswer: 0.5 },
+  })
+  const ans = r.conflicts.find((c) => c.field === 'myAnswer')
+  check('答案冲突要报出来', !!ans)
+  eq('答案冲突时采信 OCR（把握度更高）', ans?.chosen, 'ocr')
+}
+
+// 6.4 等价答案不算冲突（0.5 vs 1/2）
+{
+  const r = crossCheckDraft({
+    draft: { stem: '一个正方形的边长是多少？', options: [], myAnswer: '0.5', subject: '数学' },
+    ocrText: '一个正方形的边长是多少？\n答：1/2',
+    fieldConfidence: { stem: 0.9, myAnswer: 0.5 },
+  })
+  eq('0.5 与 1/2 不算冲突', r.conflicts.filter((c) => c.field === 'myAnswer').length, 0)
+}
+
+// 6.5 agreement 落在 0~1
+{
+  const r = crossCheckDraft({
+    draft: { stem: CROSS_STEM, options: ['12'], myAnswer: 'C' },
+    ocrText: CROSS_OCR,
+    fieldConfidence: {},
+  })
+  check('agreement 在 0~1', r.agreement >= 0 && r.agreement <= 1, `实际 ${r.agreement}`)
+}
+
+console.log('  --- findLowConfidenceFields ---')
+{
+  const low = findLowConfidenceFields({
+    draft: { stem: '题干' },
+    fieldConfidence: { stem: 0.6, options: 0.9, myAnswer: 0.5 },
+    ocrText: '题干',
+  })
+  check('低置信字段要被找出来', low.some((f) => f.field === 'stem'), JSON.stringify(low))
+  check('低置信字段带原因', low.every((f) => typeof f.reason === 'string' && f.reason.length > 0))
+  const none = findLowConfidenceFields({
+    draft: { stem: '题干' },
+    fieldConfidence: { stem: 0.95, options: 0.95 },
+    ocrText: '题干',
+  })
+  eq('高置信时不报低置信字段', none.length, 0)
+}
+
+console.log('  --- refineDraft：无低置信字段时不该调模型 ---')
+{
+  const r = await refineDraft({ cfg: {}, draft: { stem: 'x' }, lowConfidenceFields: [] })
+  eq('没有低置信字段 -> 不校正', r.corrections.length, 0)
+  eq('没有低置信字段 -> improved=false', r.improved, false)
+}
+
+console.log('  --- refineDraft：对着一台假模型端到端跑一遍 ---')
+{
+  // 起一个假的 OpenAI 兼容端点：把模型「想改什么」写死，按测试场景切换。
+  const http = await import('node:http')
+  let reply = { corrections: [] }
+  let sawImage = false
+  const server = http.createServer((req, res) => {
+    let body = ''
+    req.on('data', (c) => (body += c))
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body || '{}')
+        sawImage = JSON.stringify(parsed).includes('image_url')
+      } catch {
+        /* 忽略 */
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(
+        JSON.stringify({
+          id: 'mock',
+          object: 'chat.completion',
+          model: 'mock',
+          choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(reply) }, finish_reason: 'stop' }],
+        }),
+      )
+    })
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  const cfg = { enabled: true, baseUrl: `http://127.0.0.1:${port}/v1`, model: 'mock', apiKey: 'x', timeoutMs: 5000 }
+
+  const OCR_FULL = [
+    '3.小明有24颗糖，给了小红一半，又买来8颗。小明现在有多少颗糖？',
+    'A. 12 B. 16 C. 20 D. 24',
+    '答：C',
+  ].join('\n')
+  const draft = {
+    stem: '3.小明有24颗糖，给了小红一半。',
+    options: ['12', '16', '20', '24'],
+    myAnswer: 'B',
+    correctAnswer: 'C',
+    subject: '数学',
+  }
+  const base = {
+    cfg,
+    draft,
+    fieldConfidence: { stem: 0.5, options: 0.9, myAnswer: 0.4 },
+    ocrText: OCR_FULL,
+    imageSrc: 'data:image/jpeg;base64,AAAA',
+    lowConfidenceFields: ['stem', 'myAnswer'],
+  }
+
+  // 1) 可验证的校正（补上了漏读的半句 + 答案与 OCR 一致）-> 采纳
+  reply = {
+    corrections: [
+      {
+        field: 'stem',
+        from: '3.小明有24颗糖，给了小红一半。',
+        to: '3.小明有24颗糖，给了小红一半，又买来8颗。小明现在有多少颗糖？',
+        reason: '第二行没识别出来',
+      },
+      { field: 'myAnswer', from: 'B', to: 'C', reason: '红笔写的是C' },
+    ],
+  }
+  {
+    const r = await refineDraft(base)
+    eq('可验证的校正要采纳', r.corrections.length, 2)
+    eq('improved=true', r.improved, true)
+    check('第二遍必须带图（否则模型在纯猜）', sawImage)
+    check('采纳的校正要带理由', r.corrections.every((c) => typeof c.reason === 'string' && c.reason.length > 0))
+  }
+
+  // 2) 不可验证的校正（凭空改成另一个答案）-> 必须拒绝
+  reply = {
+    corrections: [
+      { field: 'myAnswer', from: 'B', to: 'D', reason: '我觉得是D' },
+      { field: 'stem', from: '3.小明有24颗糖，给了小红一半。', to: '一道完全不相干的题目', reason: '不确定' },
+    ],
+  }
+  {
+    const r = await refineDraft(base)
+    eq('没有证据的校正不能采纳', r.corrections.length, 0)
+    eq('没有证据时 improved=false', r.improved, false)
+    eq('被拒绝的校正要记下来', r.rejected.length, 2)
+  }
+
+  // 3) 模型引用的原值跟当前值不一致（疑似串题）-> 拒绝
+  reply = {
+    corrections: [{ field: 'myAnswer', from: 'D', to: 'C', reason: '改成C' }],
+  }
+  {
+    const r = await refineDraft(base)
+    eq('原值对不上要拒绝', r.corrections.length, 0)
+    check('原值对不上要有理由', r.rejected[0]?.reason?.includes('原值'), r.rejected[0]?.reason)
+  }
+
+  // 4) 改了不在清单里的字段 -> 拒绝
+  reply = {
+    corrections: [{ field: 'difficulty', from: '3', to: '5', reason: '很难' }],
+  }
+  {
+    const r = await refineDraft(base)
+    eq('不在清单里的字段不能改', r.corrections.length, 0)
+  }
+
+  server.close()
+}
+
+console.log('  --- preprocessImage：侧车不可用必须降级成 null ---')
+{
+  // 1) 网络错误
+  const r1 = await preprocessImage({
+    baseUrl: 'http://127.0.0.1:1',
+    imageBase64: 'AAAA',
+    timeoutMs: 500,
+    fetchImpl: async () => {
+      throw new Error('ECONNREFUSED')
+    },
+  })
+  eq('侧车不可用 -> null', r1, null)
+
+  // 2) 侧车返回 404（旧版本没有这个端点）
+  const r2 = await preprocessImage({
+    baseUrl: 'http://127.0.0.1:9',
+    imageBase64: 'AAAA',
+    fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({}) }),
+  })
+  eq('端点不存在 -> null', r2, null)
+
+  // 3) 返回体里没有图片
+  const r3 = await preprocessImage({
+    baseUrl: 'http://127.0.0.1:9',
+    imageBase64: 'AAAA',
+    fetchImpl: async () => ({ ok: true, json: async () => ({ ok: true }) }),
+  })
+  eq('返回体没有图片 -> null', r3, null)
+
+  // 4) 正常返回
+  const r4 = await preprocessImage({
+    baseUrl: 'http://ocr.local',
+    imageBase64: 'data:image/jpeg;base64,AAAA',
+    fetchImpl: async (url, init) => {
+      eq('预处理请求打到 /preprocess', url, 'http://ocr.local/preprocess')
+      check('预处理请求带 image 字段', JSON.parse(init.body).image === 'AAAA')
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          image: 'data:image/jpeg;base64,BBBB',
+          variant: 'clahe_color',
+          width: 932,
+          height: 232,
+          ms: 91,
+        }),
+      }
+    },
+  })
+  eq('正常返回：拿到增强图', r4?.image, 'data:image/jpeg;base64,BBBB')
+  eq('正常返回：变体名', r4?.variant, 'clahe_color')
+  eq('正常返回：宽', r4?.width, 932)
+
+  // 5) 没配置地址 / 没有图片
+  eq('没配地址 -> null', await preprocessImage({ baseUrl: '', imageBase64: 'AAAA' }), null)
+  eq('没有图片 -> null', await preprocessImage({ baseUrl: 'http://x', imageBase64: '' }), null)
+}
+
+/* -------------------------------------------------------------------------- */
+/* 7. 结论                                                                     */
 /* -------------------------------------------------------------------------- */
 console.log(`\n通过 ${pass} / 失败 ${fail}`)
 if (fail) {

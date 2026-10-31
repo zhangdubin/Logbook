@@ -165,14 +165,27 @@ export function parseModelJson(text) {
  *
  * @param {object} p
  * @param {object} p.cfg         resolveProviderConfig() 的结果
- * @param {string} p.imageSrc    data url 或 http(s) 图片地址
+ * @param {string} p.imageSrc    data url 或 http(s) 图片地址（原始照片）
+ * @param {string} [p.enhancedImage] **增强后的图**（OCR 侧车 /preprocess 的产物）。
+ *        手机原图有阴影/反光/透视倾斜/字小，模型直接看原图容易读错；
+ *        侧车那套 EXIF 矫正 + 尺寸归一化 + LAB-CLAHE 正是为这个准备的
+ *        （它把 real 档 CER 从 4.50% 打到 0.85%），但以前处理完就把图扔了。
+ *        给了增强图就优先用它，没给才退回原图。
  * @param {string} [p.hint]
  * @param {string} [p.grade]
  * @param {string} [p.subject]
  * @param {string} [p.ocrText]   本地 OCR 文本（作为补充线索）
  * @returns {Promise<{raw: object, repaired: boolean, model: string}>}
  */
-export async function recognizeWithVision({ cfg, imageSrc, hint, grade, subject, ocrText } = {}) {
+export async function recognizeWithVision({
+  cfg,
+  imageSrc,
+  enhancedImage,
+  hint,
+  grade,
+  subject,
+  ocrText,
+} = {}) {
   const content = [
     {
       type: 'text',
@@ -189,7 +202,9 @@ export async function recognizeWithVision({ cfg, imageSrc, hint, grade, subject,
   ]
   // 图片必须是**完整 data URL**（data:image/jpeg;base64,...）：
   // OpenAI 兼容端点（含本地 vLLM）都要求这个格式，裸 base64 会被拒绝。
-  if (imageSrc) content.push({ type: 'image_url', image_url: { url: imageSrc } })
+  // 优先用增强图；没有增强图就用原图。
+  const imageForModel = enhancedImage || imageSrc
+  if (imageForModel) content.push({ type: 'image_url', image_url: { url: imageForModel } })
 
   const text = await callChat({
     cfg,
@@ -1979,6 +1994,761 @@ export function fuseConfidence({
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* 答案等价判定 + 自校验 + 交叉核对                                               */
+/* -------------------------------------------------------------------------- */
+/*
+ * 这一段解决用户说的两件事：
+ *   「对题目识别上还是有问题」   -> 缺口 1（模型看增强图）/ 缺口 2（两遍自校验）
+ *   「纠错准确率」               -> 答案等价判定（0.5 与 1/2 是同一个数）
+ */
+
+/** 全角 → 半角（含全角空格）。模型/OCR 都可能吐全角字符。 */
+function toHalfWidth(s) {
+  return String(s ?? '')
+    .replace(/[\uFF01-\uFF5E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    .replace(/\u3000/g, ' ')
+}
+
+/** 常见单位词（长的排前面，保证「厘米」不会被「米」截胡） */
+const ANSWER_UNITS = [
+  '平方米', '立方米', '千克', '厘米', '毫米', '千米', '分钟', '小时', '平方', '立方', '人次',
+  'kg', 'cm', 'mm', 'km', 'dm', 'mg', 'ml', 'min', 'm', 'l', 'g', 't', 's',
+  '元', '角', '分', '个', '只', '本', '支', '件', '人', '颗', '袋', '箱', '吨', '克', '米',
+  '度', '天', '秒', '页', '题', '条', '根', '棵', '张', '台', '辆', '名', '次',
+].sort((a, b) => b.length - a.length)
+
+/** 从文本开头匹配一个单位词（匹配不到返回 ''） */
+function matchUnit(rest) {
+  const s = String(rest ?? '').toLowerCase()
+  for (const u of ANSWER_UNITS) {
+    if (s.startsWith(u.toLowerCase())) return u.toLowerCase()
+  }
+  return ''
+}
+
+/**
+ * 选项字母归一：Ａ / （A） / (A) / A. / A、 / A -> A。
+ * 不是「单个字母」时返回 ''（那是选项内容，不是答案字母）。
+ */
+export function normalizeOptionLetter(s) {
+  const t = toHalfWidth(s).trim()
+  if (!t) return ''
+  const m = t.match(/^[（(【\[]?\s*([A-Ha-h])\s*[)）】\].、,，:：]?$/)
+  return m ? m[1].toUpperCase() : ''
+}
+
+/**
+ * 选项内容归一：去掉字母前缀 + 去空白 + 统一标点。
+ * 交叉核对时用 —— 否则「A. 12 厘米」和「A、12厘米」会一直报假冲突。
+ */
+export function normalizeOptionText(s) {
+  const t = toHalfWidth(s).trim()
+  const stripped = stripOptionPrefix(t).text ?? t
+  return String(stripped ?? '')
+    .replace(/\s+/g, '')
+    .replace(/[。．.,，、；;：:]/g, '')
+    .toLowerCase()
+}
+
+/**
+ * 答案文本归一（全角→半角、去空白、去「答：」前缀、去句末标点、数字去无意义的 0）。
+ *
+ * 为什么要归一：纠错判定要在「同一个答案的不同写法」之间认出来，
+ * 学生写「Ａ」「（A）」「A.」「A」是同一个意思；
+ * 「0.50」和「0.5」也是同一个数。
+ */
+export function normalizeAnswerText(s) {
+  let t = toHalfWidth(s).trim()
+  if (!t) return ''
+  // 「正确答案：」「答：」这类标签前缀
+  t = t.replace(/^(?:正确答案|参考答案|标准答案|我的答案|答案|答|选择|选)\s*[:：]\s*/u, '')
+  // 单独一个选项字母的各种写法
+  const letter = normalizeOptionLetter(t)
+  if (letter) return letter
+  // 去空白（"12 cm" -> "12cm"）
+  t = t.replace(/\s+/g, '')
+  // 去句末标点
+  t = t.replace(/[。．.,，、；;：:]+$/u, '')
+  // 数字归一：0.50 -> 0.5、3.0 -> 3
+  t = t.replace(/-?\d+\.\d+(?!\d)/g, (m) => {
+    const num = Number(m)
+    return Number.isFinite(num) ? String(Number(num.toFixed(10))) : m
+  })
+  // 前导 0：007 -> 7（不动 "0.5" 和 "105"）
+  t = t.replace(/(?<![\d.])-?0+(\d)/g, '$1')
+  return t.toLowerCase()
+}
+
+/**
+ * 抽出答案里的数值（带单位）。
+ * "12cm" -> [{value:12, unit:'cm'}]；"3米5厘米" -> 两条。
+ * 百分号不是单位（50% = 0.5，是倍数），所以 unit 留空。
+ */
+export function extractNumbers(text) {
+  const t = toHalfWidth(text)
+  const out = []
+  const re = /(-?\d+(?:\.\d+)?)/g
+  let m
+  while ((m = re.exec(t)) !== null) {
+    const value = Number(m[1])
+    if (!Number.isFinite(value)) continue
+    const rest = t.slice(m.index + m[0].length)
+    let unit = matchUnit(rest)
+    if (rest.trim().startsWith('%')) unit = ''
+    out.push({ value, unit })
+  }
+  return out
+}
+
+/** 数值近似相等（相对误差 1e-9，够严格，不会把 1/3 和 0.33 判成一样） */
+function nearlyEqual(a, b) {
+  const diff = Math.abs(a - b)
+  return diff <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b))
+}
+
+/**
+ * 把一个答案解析成「单一数值 + 单位」。
+ * 支持：整数/小数、分数 a/b、百分数 a%、比值 a:b（3:4 = 0.75）、带单位（12cm）。
+ * 不是纯数值答案（"2x+2"、"AB"）返回 null。
+ */
+function numericValueOf(text) {
+  const t = normalizeAnswerText(text)
+  if (!t) return null
+
+  // 分数 a/b
+  let m = t.match(/^(-?\d+(?:\.\d+)?)\/(-?\d+(?:\.\d+)?)$/)
+  if (m) {
+    const d = Number(m[2])
+    if (!d) return null
+    return { value: Number(m[1]) / d, unit: '' }
+  }
+  // 百分数 a%
+  m = t.match(/^(-?\d+(?:\.\d+)?)%$/)
+  if (m) return { value: Number(m[1]) / 100, unit: '' }
+  // 比值 a:b
+  m = t.match(/^(-?\d+(?:\.\d+)?):(-?\d+(?:\.\d+)?)$/)
+  if (m) {
+    const d = Number(m[2])
+    if (!d) return null
+    return { value: Number(m[1]) / d, unit: '' }
+  }
+  // 纯数字（可带一个单位）
+  m = t.match(/^(-?\d+(?:\.\d+)?)(.*)$/)
+  if (!m) return null
+  const rest = m[2]
+  const unit = matchUnit(rest)
+  // 单位后面还有别的字符 -> 不是纯数值答案（例如 "2x+2"）
+  if (rest.toLowerCase() !== unit) return null
+  return { value: Number(m[1]), unit }
+}
+
+/* ---- 迷你多项式：为了判定 2(x+1) ≡ 2x+2 这类代数式等价 ---- */
+// 系数表：key = 变量组合（已排序，如 ""常数 / "x" / "x^2" / "x*y"），value = 系数
+function polyConst(c) {
+  const m = new Map()
+  if (c) m.set('', c)
+  return m
+}
+function polyScale(p, k) {
+  const out = new Map()
+  for (const [key, v] of p) {
+    const nv = v * k
+    if (Math.abs(nv) > 1e-12) out.set(key, nv)
+  }
+  return out
+}
+function polyAdd(a, b, sign = 1) {
+  const out = new Map(a)
+  for (const [key, v] of b) {
+    const cur = (out.get(key) ?? 0) + sign * v
+    if (Math.abs(cur) < 1e-12) out.delete(key)
+    else out.set(key, cur)
+  }
+  return out
+}
+/** 把两个单项式相乘：x^2 * y -> x^2*y */
+function combineTerms(ka, kb) {
+  const parse = (k) =>
+    k
+      ? k.split('*').map((t) => {
+          const [v, e] = t.split('^')
+          return [v, e ? Number(e) : 1]
+        })
+      : []
+  const counts = new Map()
+  for (const [v, e] of [...parse(ka), ...parse(kb)]) counts.set(v, (counts.get(v) ?? 0) + e)
+  return [...counts.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([v, e]) => (e === 1 ? v : `${v}^${e}`))
+    .join('*')
+}
+function polyMul(a, b) {
+  const out = new Map()
+  for (const [ka, va] of a) {
+    for (const [kb, vb] of b) {
+      const key = combineTerms(ka, kb)
+      const cur = (out.get(key) ?? 0) + va * vb
+      if (Math.abs(cur) < 1e-12) out.delete(key)
+      else out.set(key, cur)
+    }
+  }
+  return out
+}
+function samePolynomial(a, b) {
+  if (a.size !== b.size) return false
+  for (const [key, v] of a) {
+    const w = b.get(key)
+    if (w === undefined) return false
+    if (!nearlyEqual(v, w)) return false
+  }
+  return true
+}
+
+/**
+ * 解析成多项式（支持 + - * / ^、括号、隐式乘法 2x / 2(x+1)）。
+ * 不认识的写法返回 null —— **宁可判不出来，也不要判错**。
+ */
+function parsePolynomial(text) {
+  const s = String(text ?? '').replace(/\s+/g, '')
+  if (!s) return null
+  if (!/^[0-9a-zA-Z.+\-*/^()]+$/.test(s)) return null
+  let pos = 0
+  const peek = () => s[pos]
+  const eat = (ch) => {
+    if (s[pos] === ch) {
+      pos++
+      return true
+    }
+    return false
+  }
+
+  function parseExpr() {
+    let left = parseTerm()
+    if (!left) return null
+    while (peek() === '+' || peek() === '-') {
+      const op = s[pos++]
+      const right = parseTerm()
+      if (!right) return null
+      left = polyAdd(left, right, op === '+' ? 1 : -1)
+    }
+    return left
+  }
+
+  function parseTerm() {
+    let left = parseFactor()
+    if (!left) return null
+    for (;;) {
+      const ch = peek()
+      if (ch === '*' || ch === '/') {
+        pos++
+        const right = parseFactor()
+        if (!right) return null
+        if (ch === '/') {
+          // 只支持除以常数（分数里的分母）
+          if (right.size !== 1 || !right.has('')) return null
+          const d = right.get('')
+          if (Math.abs(d) < 1e-12) return null
+          left = polyScale(left, 1 / d)
+        } else {
+          left = polyMul(left, right)
+        }
+      } else if (ch && /[0-9a-zA-Z(]/.test(ch)) {
+        // 隐式乘法：2x、3x^2、2(x+1)
+        const right = parseFactor()
+        if (!right) return null
+        left = polyMul(left, right)
+      } else break
+    }
+    return left
+  }
+
+  function parseFactor() {
+    const base = parseUnary()
+    if (!base) return null
+    if (peek() === '^') {
+      pos++
+      const expPoly = parseUnary()
+      if (!expPoly) return null
+      if (expPoly.size !== 1 || !expPoly.has('')) return null
+      const exp = expPoly.get('')
+      if (!Number.isInteger(exp) || exp < 0 || exp > 8) return null
+      let out = polyConst(1)
+      for (let i = 0; i < exp; i++) out = polyMul(out, base)
+      return out
+    }
+    return base
+  }
+
+  function parseUnary() {
+    if (eat('+')) return parseUnary()
+    if (eat('-')) {
+      const v = parseUnary()
+      return v ? polyScale(v, -1) : null
+    }
+    if (eat('(')) {
+      const v = parseExpr()
+      if (!v || !eat(')')) return null
+      return v
+    }
+    const numMatch = /^\d+(?:\.\d+)?/.exec(s.slice(pos))
+    if (numMatch) {
+      pos += numMatch[0].length
+      return polyConst(Number(numMatch[0]))
+    }
+    const varMatch = /^[a-zA-Z]/.exec(s.slice(pos))
+    if (varMatch) {
+      pos += 1
+      return new Map([[varMatch[0], 1]])
+    }
+    return null
+  }
+
+  const result = parseExpr()
+  if (!result || pos !== s.length) return null
+  return result
+}
+
+/**
+ * 两个答案是否**等价**（同一个意思的两种写法）。
+ *
+ * 这是「纠错准确率」的关键：学生写 0.5、标准答案是 1/2，其实**是对的**；
+ * 写 2x+2、标准答案是 2(x+1)，也是对的。
+ * 以前纯字符串比对会把这些判成「错了」，于是错因被误判成「计算失误/方法不当」。
+ *
+ * 规则：
+ *   - 归一后完全相同            -> 等价
+ *   - 数值 + 单位一致且数值相等 -> 等价（1/2 ≡ 0.5 ≡ 50%；3:4 ≡ 0.75）
+ *   - 单位不同                   -> **不等价**（12cm 与 12m 是两个量）
+ *   - 数学：多项式系数相同        -> 等价（2(x+1) ≡ 2x+2）
+ *
+ * @param {string} a
+ * @param {string} b
+ * @param {string} [subject] 数学才做代数式等价，其它学科只比字符串/数值
+ */
+export function areAnswersEquivalent(a, b, subject = '数学') {
+  const na = normalizeAnswerText(a)
+  const nb = normalizeAnswerText(b)
+  if (!na || !nb) return false
+  if (na === nb) return true
+
+  const subjectKey = normalizeSubject(subject) || '数学'
+
+  const va = numericValueOf(na)
+  const vb = numericValueOf(nb)
+  if (va && vb) {
+    if (va.unit !== vb.unit) return false
+    return nearlyEqual(va.value, vb.value)
+  }
+  // 一边是纯数值、一边不是 -> 不等价（"12" vs "2x+2"）
+  if (va || vb) return false
+
+  if (subjectKey === '数学') {
+    const pa = parsePolynomial(na)
+    const pb = parsePolynomial(nb)
+    if (pa && pb) return samePolynomial(pa, pb)
+  }
+  return false
+}
+
+/**
+ * 找出**低置信字段**（两遍识别的触发条件）。
+ *
+ * 两个信号：
+ *   1) 模型自报的字段置信度低于阈值；
+ *   2) 题干与本地 OCR 原文差太远 —— 模型可能漏行/看错，但它的自报置信度未必低。
+ *
+ * @returns {{field:string, confidence:number, reason:string}[]}
+ */
+export function findLowConfidenceFields({ draft = {}, fieldConfidence = {}, ocrText = '', threshold = 0.75 } = {}) {
+  const out = []
+  const seen = new Set()
+  for (const field of ['stem', 'options', 'myAnswer', 'correctAnswer']) {
+    const conf = Number(fieldConfidence?.[field])
+    if (Number.isFinite(conf) && conf < threshold) {
+      out.push({ field, confidence: round2(conf), reason: `字段置信度 ${round2(conf)} 低于 ${threshold}` })
+      seen.add(field)
+    }
+  }
+  const stem = String(draft?.stem ?? '')
+  if (stem && ocrText && !seen.has('stem')) {
+    const sim = textSimilarity(stem, ocrText)
+    if (sim < 0.35) {
+      out.push({ field: 'stem', confidence: round2(sim), reason: `题干与本地 OCR 原文相似度仅 ${sim.toFixed(2)}` })
+    }
+  }
+  return out
+}
+
+/**
+ * 从 OCR 文本里抽出选项（按行找 "A. xxx" 这类写法）。
+ * @returns {{letter:string, text:string}[]}
+ */
+function optionsFromOcrText(ocrText) {
+  const out = []
+  for (const line of String(ocrText ?? '').split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const split = splitOptionLine(trimmed)
+    if (split) {
+      for (const o of split) out.push(o)
+      continue
+    }
+    // 整行只有一个选项："A. 12"
+    const single = trimmed.match(/^([A-Ha-h])\s*[.、．)）:：]\s*(.+)$/)
+    if (single) out.push({ letter: single[1].toUpperCase(), text: single[2].trim() })
+  }
+  return out
+}
+
+/**
+ * 从 OCR 原文里取出**题干部分**（把选项行、作答行剔除掉）。
+ *
+ * 为什么必须先剔：OCR 原文经常是整页好几道题，拿整页跟一道题比，
+ * 「模型读漏了半句」和「OCR 原文本来就长」根本分不开。
+ * 只拿题干部分比，才能看出模型是不是**漏读**。
+ */
+function ocrStemPart(ocrText) {
+  const text = String(ocrText ?? '')
+  if (!text.trim()) return ''
+  const lines = text
+    .split(/\r?\n/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .map((t) => ({ text: t, score: 0.9 }))
+  const { groups } = classifyOcrLines(lines)
+  const stem = (groups?.stem ?? []).map((l) => l.text).join('\n').trim()
+  return stem || text
+}
+
+/**
+ * OCR ↔ 视觉模型的**交叉核对**。
+ *
+ * 两边本来就是**独立信号源**，但以前完全没用上这个关系：
+ * 模型把「3」读成「8」，OCR 读对了，没有任何东西会发现。
+ *
+ * 冲突时按「谁的证据更强」决定采信谁，并把冲突记下来返回给前端展示
+ * （让用户看见「两个引擎不一致，我选了哪个、为什么」）。
+ *
+ * @returns {{conflicts: {field:string, vision:string, ocr:string, chosen:'vision'|'ocr', reason:string}[], agreement: number}}
+ */
+export function crossCheckDraft({ draft = {}, ocrText = '', fieldConfidence = {} } = {}) {
+  const conflicts = []
+  let checked = 0
+  let agreed = 0
+  const text = String(ocrText ?? '')
+
+  /* ---- 题干 ---- */
+  const stem = String(draft?.stem ?? '').trim()
+  if (stem && text) {
+    checked++
+    // 只拿 OCR 的**题干部分**比，否则整页多题会把「模型漏读」掩盖掉
+    const ocrStem = ocrStemPart(text)
+    // 模型题干覆盖了 OCR 题干的多少（1 = 读全了）
+    const covered = textCoverage(ocrStem, stem)
+    // 反过来：模型题干有多少能在 OCR 题干里找到（1 = 模型没编内容）
+    const modelInOcr = textCoverage(stem, ocrStem)
+    if (covered >= 0.75) {
+      agreed++
+    } else {
+      // 模型读的是 OCR 题干的子集 -> 多半是 OCR 原文含多道题，模型没读错；
+      // 模型读的内容 OCR 里根本没有 -> 模型可能看错行/编内容，采信 OCR。
+      const chosen = modelInOcr >= 0.75 ? 'vision' : 'ocr'
+      conflicts.push({
+        field: 'stem',
+        vision: stem,
+        ocr: ocrStem,
+        chosen,
+        reason:
+          chosen === 'vision'
+            ? `模型题干只覆盖了 OCR 题干的 ${(covered * 100).toFixed(0)}%，但模型内容都能在 OCR 里找到，判断是 OCR 原文含多道题所致，采信模型`
+            : `模型题干只覆盖了 OCR 题干的 ${(covered * 100).toFixed(0)}%，且模型内容在 OCR 里找不到，判断模型漏读/看错行，采信 OCR`,
+      })
+    }
+  }
+
+  /* ---- 选项 ---- */
+  const modelOptions = Array.isArray(draft?.options) ? draft.options : []
+  const ocrOptions = optionsFromOcrText(text)
+  if (modelOptions.length && ocrOptions.length) {
+    checked++
+    const modelNorm = modelOptions.map((o) => normalizeOptionText(o))
+    const ocrNorm = ocrOptions.map((o) => normalizeOptionText(o.text))
+    const sameCount = modelNorm.length === ocrNorm.length
+    const sameContent = sameCount && modelNorm.every((v, i) => v === ocrNorm[i])
+    if (sameContent) {
+      agreed++
+    } else if (!sameCount && ocrNorm.length > modelNorm.length) {
+      // OCR 找到了更多选项 -> 模型漏选项，采信 OCR
+      conflicts.push({
+        field: 'options',
+        vision: modelOptions.join(' | '),
+        ocr: ocrOptions.map((o) => `${o.letter}. ${o.text}`).join(' | '),
+        chosen: 'ocr',
+        reason: `本地 OCR 识别出 ${ocrNorm.length} 个选项，模型只给出 ${modelNorm.length} 个，判断模型漏读，采信 OCR`,
+      })
+    } else {
+      const conf = Number(fieldConfidence?.options)
+      const chosen = Number.isFinite(conf) && conf >= 0.8 ? 'vision' : 'ocr'
+      conflicts.push({
+        field: 'options',
+        vision: modelOptions.join(' | '),
+        ocr: ocrOptions.map((o) => `${o.letter}. ${o.text}`).join(' | '),
+        chosen,
+        reason: `选项内容不一致（模型 ${modelNorm.length} 个 / OCR ${ocrNorm.length} 个），模型选项置信度 ${Number.isFinite(conf) ? conf.toFixed(2) : '未知'}，采信${chosen === 'vision' ? '模型' : 'OCR'}`,
+      })
+    }
+  }
+
+  /* ---- 答案（学生作答 / 正确答案） ---- */
+  for (const field of ['myAnswer', 'correctAnswer']) {
+    const value = String(draft?.[field] ?? '').trim()
+    if (!value || !text) continue
+    const hints = extractAnswerHints(text.split(/\r?\n/).map((t) => ({ text: t, score: 0.9 })))
+    const hint = hints.find((h) => h.kind === field) ?? hints.find((h) => h.kind === 'myAnswer')
+    if (!hint) continue
+    checked++
+    const same = areAnswersEquivalent(value, hint.value, draft?.subject || '数学')
+    if (same) {
+      agreed++
+    } else {
+      const conf = Number(fieldConfidence?.[field])
+      const chosen = Number.isFinite(conf) && conf >= hint.confidence ? 'vision' : 'ocr'
+      conflicts.push({
+        field,
+        vision: value,
+        ocr: hint.value,
+        chosen,
+        reason: `模型识别为「${value}」，本地 OCR 在「${hint.line}」里读到「${hint.value}」（把握度 ${hint.confidence.toFixed(2)}），采信${chosen === 'vision' ? '模型' : 'OCR'}`,
+      })
+    }
+  }
+
+  return {
+    conflicts,
+    agreement: checked ? round2(agreed / checked) : 1,
+  }
+}
+
+/** 第二遍（定向校正）允许改的字段 */
+export const REFINE_FIELDS = ['stem', 'options', 'myAnswer', 'correctAnswer']
+
+/**
+ * 第二遍专用的系统提示词。
+ *
+ * 不能复用 VISION_SYSTEM_PROMPT —— 那个要求模型输出**整份**草稿 JSON，
+ * 复核任务只需要「改了哪几个字段」，用错提示词模型会把整份草稿重写一遍，
+ * 反而把第一遍对的字段也改坏。
+ */
+export const REFINE_SYSTEM_PROMPT = [
+  '你是错题照片识别的复核助手。',
+  '你会收到：同一道题的第一遍识别结果、需要复核的字段清单、本地 OCR 原文、以及原始照片。',
+  '请对照照片**只复核指定的字段**，并且只在确实看清了的时候才提出修改。',
+  '不要重复输出整份草稿，不要修改未列入清单的字段。',
+  '严格输出这个 JSON，不要输出任何其它内容：',
+  '{"corrections":[{"field":"字段名","from":"原值","to":"新值","reason":"为什么改"}]}',
+  '没有需要修改的字段时输出 {"corrections":[]}。',
+].join('\n')
+
+/**
+ * 判断一条校正**是不是真的改善**了结果。
+ *
+ * 原则：**没有可验证的证据就不改**。
+ * 第二遍把对的改错，比不校正更糟 —— 用户的错题本来是对的。
+ */
+function judgeCorrection({ field, current, to, ocrText, fieldConfidence }) {
+  const text = String(ocrText ?? '')
+
+  if (field === 'stem') {
+    if (!text) return { better: false, reason: '没有本地 OCR 原文可验证，保留原值' }
+    // 只比 OCR 的**题干部分**，并且用「模型题干覆盖了 OCR 题干的多少」这个指标：
+    // 模型漏读半句时覆盖率会明显下降，而新的题干如果补上了，覆盖率会上升。
+    // （对称相似度在这里没用：OCR 原文含多道题时会被整页长度稀释。）
+    const ocrStem = ocrStemPart(text)
+    const before = textCoverage(ocrStem, current)
+    const after = textCoverage(ocrStem, to)
+    if (after > before + 0.02) {
+      return {
+        better: true,
+        reason: `新题干覆盖了本地 OCR 题干的 ${(after * 100).toFixed(0)}%（原来只有 ${(before * 100).toFixed(0)}%），判断确实补上了漏读的内容`,
+      }
+    }
+    return {
+      better: false,
+      reason: `新题干对本地 OCR 题干的覆盖没有提高（${(after * 100).toFixed(0)}% ≤ ${(before * 100).toFixed(0)}%），保留原值`,
+    }
+  }
+
+  if (field === 'options') {
+    const before = Array.isArray(current) ? current.length : 0
+    const after = Array.isArray(to) ? to.length : 0
+    if (!after) return { better: false, reason: '新选项为空，保留原值' }
+    // OCR 里能数出几个选项：数出来的更全就采信新值
+    const ocrOptions = optionsFromOcrText(text)
+    if (ocrOptions.length && after > before && after >= ocrOptions.length) {
+      return { better: true, reason: `新选项 ${after} 个，与本地 OCR 读到的 ${ocrOptions.length} 个一致，比原来的 ${before} 个更全` }
+    }
+    const conf = Number(fieldConfidence?.options)
+    if (Number.isFinite(conf) && conf < 0.5 && after >= before) {
+      return { better: true, reason: `原选项置信度仅 ${conf.toFixed(2)}，新选项数量不少于原值` }
+    }
+    return { better: false, reason: '没有证据表明新选项更好，保留原值' }
+  }
+
+  // 答案类
+  if (field === 'myAnswer' || field === 'correctAnswer') {
+    const hints = extractAnswerHints(text.split(/\r?\n/).map((t) => ({ text: t, score: 0.9 })))
+    const hint = hints.find((h) => h.kind === field) ?? hints.find((h) => h.kind === 'myAnswer')
+    if (hint && areAnswersEquivalent(to, hint.value, '数学')) {
+      return { better: true, reason: `新答案与本地 OCR 读到的「${hint.value}」一致（${hint.reason}）` }
+    }
+    const legal = /^[A-Ha-h]$/.test(String(to).trim())
+    if (legal && !/^[A-Ha-h]$/.test(String(current).trim())) {
+      return { better: true, reason: '新答案是合法选项字母，而原值不是' }
+    }
+    return { better: false, reason: '没有可验证的依据表明新答案更准，保留原值' }
+  }
+
+  return { better: false, reason: '未知字段，不校正' }
+}
+
+/**
+ * 第二遍：**定向校正**低置信字段。
+ *
+ * 为什么要第二遍：第一遍模型是「一次性输出」，它自己都不知道哪里没看清；
+ * 把第一遍结果 + OCR 原文 + 低置信字段清单回灌，让它只盯着可疑字段再看一遍，
+ * 识别准确率会明显提升。
+ *
+ * 关键安全阀：**只有能验证「确实变好了」的校正才会被采纳**，
+ * 其余一律保留第一遍的值（宁可少改，不要把对的改错）。
+ *
+ * @param {object} p
+ * @param {object} p.cfg                 模型配置
+ * @param {object} p.draft               第一遍的草稿
+ * @param {object} p.fieldConfidence     第一遍的逐字段置信度
+ * @param {string} p.ocrText             本地 OCR 原文
+ * @param {string} p.imageSrc            原图（**必须带图**，否则模型是在纯猜）
+ * @param {string[]} p.lowConfidenceFields 需要校正的字段
+ * @returns {Promise<{corrections: {field:string,from:string,to:string,reason:string}[], improved: boolean, rejected: object[]}>}
+ */
+export async function refineDraft({
+  cfg,
+  draft = {},
+  fieldConfidence = {},
+  ocrText = '',
+  imageSrc = '',
+  lowConfidenceFields = [],
+  timeoutMs = null,
+} = {}) {
+  const fields = (lowConfidenceFields || [])
+    .map((f) => (typeof f === 'string' ? f : f?.field))
+    .filter((f) => REFINE_FIELDS.includes(f))
+  if (!fields.length) {
+    return { corrections: [], improved: false, rejected: [], skipped: '没有低置信字段' }
+  }
+
+  const current = {
+    stem: String(draft?.stem ?? ''),
+    options: Array.isArray(draft?.options) ? draft.options : [],
+    myAnswer: String(draft?.myAnswer ?? ''),
+    correctAnswer: String(draft?.correctAnswer ?? ''),
+  }
+
+  const prompt = [
+    '这是同一道错题的第一遍识别结果，其中部分字段可能没看清。',
+    `请**只**复核下面这些字段：${fields.join('、')}`,
+    '',
+    '第一遍结果：',
+    `题干：${current.stem.slice(0, 500)}`,
+    `选项：${current.options.map((o, i) => `${String.fromCharCode(65 + i)}. ${o}`).join('  ').slice(0, 500)}`,
+    `学生作答：${current.myAnswer}`,
+    `正确答案：${current.correctAnswer}`,
+    '',
+    ocrText ? `本地 OCR 原文（可能有错，仅作参考）：\n${String(ocrText).slice(0, 1500)}` : '',
+    '',
+    '请对照图片复核，只在**确实看清了**的时候改。',
+    '输出严格用这个 JSON 结构（没有要改的字段就返回空的 corrections 数组）：',
+    '{"corrections":[{"field":"stem|options|myAnswer|correctAnswer","from":"原值","to":"新值","reason":"为什么这么改"}]}',
+  ]
+    .filter((x) => x !== '')
+    .join('\n')
+
+  const content = [{ type: 'text', text: prompt }]
+  // 必须带图：不给图模型只能靠猜，那比不改更糟
+  if (imageSrc) content.push({ type: 'image_url', image_url: { url: imageSrc } })
+
+  let data = null
+  try {
+    const text = await callChat({
+      cfg,
+      model: cfg?.visionModelEffective || cfg?.model,
+      messages: [
+        { role: 'system', content: REFINE_SYSTEM_PROMPT },
+        { role: 'user', content },
+      ],
+      json: true,
+      timeoutMs: timeoutMs ?? cfg?.timeoutMs ?? 25000,
+      temperature: 0.1,
+    })
+    const parsed = parseModelJson(text)
+    data = parsed?.data ?? null
+  } catch {
+    // 第二遍失败 -> 用第一遍（降级，不报错）
+    return { corrections: [], improved: false, rejected: [], skipped: '校正调用失败，保留第一遍结果' }
+  }
+
+  const proposals = Array.isArray(data?.corrections) ? data.corrections : []
+  const accepted = []
+  const rejected = []
+  for (const p of proposals) {
+    const field = String(p?.field ?? '').trim()
+    const to = typeof p?.to === 'string' ? p.to.trim() : ''
+    const from = typeof p?.from === 'string' ? p.from.trim() : ''
+    const reason = String(p?.reason ?? '').slice(0, 200)
+    if (!fields.includes(field)) {
+      rejected.push({ field, from, to, reason: `不在本次允许校正的字段清单内（${fields.join('、')}）` })
+      continue
+    }
+    if (!to) {
+      rejected.push({ field, from, to, reason: '新值为空' })
+      continue
+    }
+    const before = current[field]
+    const beforeText = Array.isArray(before) ? before.join(' | ') : String(before ?? '')
+    // 模型引用的「原值」必须和当前值一致，否则它可能在说别的题/别的版本
+    if (from && normalizeComparableAnswer(from) !== normalizeComparableAnswer(beforeText)) {
+      rejected.push({ field, from, to, reason: '模型引用的原值与当前值不一致，疑似串题' })
+      continue
+    }
+    if (normalizeComparableAnswer(to) === normalizeComparableAnswer(beforeText)) {
+      rejected.push({ field, from, to, reason: '新值与原值等价，无需修改' })
+      continue
+    }
+    const verdict = judgeCorrection({
+      field,
+      current: before,
+      to: field === 'options' ? (Array.isArray(to) ? to : String(to).split(/\s*[|｜]\s*/)) : to,
+      ocrText,
+      fieldConfidence,
+    })
+    if (!verdict.better) {
+      rejected.push({ field, from: beforeText, to, reason: verdict.reason })
+      continue
+    }
+    accepted.push({ field, from: beforeText, to, reason: verdict.reason })
+  }
+
+  return { corrections: accepted, improved: accepted.length > 0, rejected }
+}
+
+/** 校正比对用的宽松归一（只看是否「同一个意思」，不区分大小写与空格） */
+function normalizeComparableAnswer(s) {
+  return String(s ?? '')
+    .replace(/\s+/g, '')
+    .replace(/[。．.,，、；;：:]/g, '')
+    .toLowerCase()
+}
+
 export default {
   SUBJECTS,
   QUESTION_TYPES,
@@ -1986,6 +2756,14 @@ export default {
   parseModelJson,
   recognizeWithVision,
   recognizeFromOcrText,
+  refineDraft,
+  crossCheckDraft,
+  findLowConfidenceFields,
+  areAnswersEquivalent,
+  normalizeAnswerText,
+  normalizeOptionLetter,
+  normalizeOptionText,
+  extractNumbers,
   normalizeDraft,
   draftFromOcrLines,
   fieldConfidenceFromOcr,

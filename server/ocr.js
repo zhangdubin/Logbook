@@ -261,6 +261,66 @@ export async function runLocalOcr({ baseUrl, imageBase64, timeoutMs = OCR_TIMEOU
 }
 
 /**
+ * 让 OCR 侧车把图片**预处理**后返回（EXIF 矫正 + 尺寸归一化 + LAB-CLAHE）。
+ *
+ * 用途：视觉模型看的是**增强后的图**，而不是手机原图。
+ * 侧车这套处理是它把 real 档 CER 从 4.50% 打到 0.85% 的原因
+ * （阴影 / 光照不均 / 字小），但以前处理完就把图扔了，模型一点没享受到。
+ *
+ * ⚠️ **任何失败都返回 null，绝不抛**：预处理是「锦上添花」，
+ * 侧车没起 / 超时 / 版本旧（没有这个端点）都应该静默回退到原图，
+ * 不能因为预处理失败把整条识别链路带崩。
+ *
+ * @param {object} p
+ * @param {string} p.baseUrl       OCR 服务地址（不含 /preprocess）
+ * @param {string} p.imageBase64   图片 base64（可带 data: 前缀，会自动剥离）
+ * @param {number} [p.timeoutMs]
+ * @param {Function} [p.fetchImpl] 注入的 fetch（单测用；默认用全局 fetch）
+ * @returns {Promise<{image:string, variant:string, width:number, height:number, ms:number}|null>}
+ */
+export async function preprocessImage({
+  baseUrl,
+  imageBase64,
+  timeoutMs = OCR_TIMEOUT_MS,
+  fetchImpl = null,
+} = {}) {
+  const root = String(baseUrl ?? '').replace(/\/+$/, '')
+  if (!root) return null
+  const bare = stripDataUrl(imageBase64)
+  if (!bare) return null
+
+  const doFetch = typeof fetchImpl === 'function' ? fetchImpl : globalThis.fetch
+  if (typeof doFetch !== 'function') return null
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await doFetch(`${root}/preprocess`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: bare }),
+      signal: controller.signal,
+    })
+    if (!res || !res.ok) return null
+    const data = await res.json().catch(() => null)
+    const image = typeof data?.image === 'string' ? data.image : ''
+    if (!image) return null
+    return {
+      image,
+      variant: String(data?.variant ?? ''),
+      width: Number(data?.width) || 0,
+      height: Number(data?.height) || 0,
+      ms: Number(data?.ms) || 0,
+    }
+  } catch {
+    // 侧车不可用 / 超时 / 返回体不是 JSON —— 一律降级成 null，调用方用原图
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
  * 探测本地 OCR 服务是否可达（用于「只配了本地 OCR、没配大模型」时的连通性测试）。
  * 先试 GET /health，再退回 POST /predict（塞一张 1×1 红 PNG，开销极小）。
  *
@@ -303,4 +363,4 @@ export async function probeOcrService({ baseUrl, timeoutMs = 8000 } = {}) {
   }
 }
 
-export default { runLocalOcr, extractOcrPairs, stripDataUrl, probeOcrService }
+export default { runLocalOcr, extractOcrPairs, stripDataUrl, probeOcrService, preprocessImage }
