@@ -69,7 +69,22 @@ docker compose version >/dev/null 2>&1 || die "没找到 docker compose（需要
 docker info >/dev/null 2>&1 || die "docker 服务没起来，请先 systemctl start docker"
 ok "docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo '?') / compose $(docker compose version --short 2>/dev/null || echo '?')"
 
-# ------------------------- 2. 解包 -------------------------
+# ------------------------- 2. 架构检测 -------------------------
+# 镜像里的二进制是按 CPU 架构编译的。架构不对时 Docker 报的是
+#   exec /usr/local/bin/entrypoint.sh: exec format error
+# 这句话极具误导性（看着像脚本坏了），其实是架构不匹配。
+# 所以这里先确定本机架构，只导入对应的那份镜像 —— 导错架构的镜像
+# 不会立刻报错，要等到容器启动时才炸，非常难查。
+HOST_MACHINE="$(uname -m)"
+case "$HOST_MACHINE" in
+  x86_64|amd64)  ARCH="amd64" ;;
+  aarch64|arm64) ARCH="arm64" ;;
+  armv7l)        ARCH="armv7" ;;
+  *) die "不支持的 CPU 架构：$HOST_MACHINE（本离线包只提供 amd64 / arm64）" ;;
+esac
+ok "本机架构：${HOST_MACHINE} → 使用 ${ARCH} 镜像"
+
+# ------------------------- 3. 解包 -------------------------
 if [ -n "$BUNDLE" ]; then
   [ -f "$BUNDLE" ] || die "找不到离线包：$BUNDLE"
   info "解包到 ${INSTALL_DIR}"
@@ -88,20 +103,57 @@ if [ ! -f "$SRC_DIR/docker-compose.offline.yml" ] && [ -f "$INSTALL_DIR/docker-c
 fi
 [ -f "$SRC_DIR/docker-compose.offline.yml" ] || die "找不到 docker-compose.offline.yml —— 离线包不完整？"
 
-# --- 3. 导入镜像（从包所在目录，不是从安装目录！） ---
+# --- 4. 导入镜像（从包所在目录，不是从安装目录！） ---
+# 优先选带架构后缀的（-<arch>.tar.gz）；没有就退回无后缀的（单架构旧包）。
+load_one() {
+  local img="$1"
+  info "导入镜像 $(basename "$img")…"
+  # docker load 能自动识别 gzip，但老版本 Docker 不一定认 —— 双保险
+  if ! docker load -i "$img" >/dev/null 2>&1; then
+    case "$img" in
+      *.gz|*.tgz) gunzip -c "$img" | docker load >/dev/null || die "镜像导入失败：$img" ;;
+      *) die "镜像导入失败：$img" ;;
+    esac
+  fi
+  ok "已导入 $(basename "$img")"
+}
+
 if [ -d "$SRC_DIR/images" ]; then
-  for img in "$SRC_DIR"/images/*.tar.gz "$SRC_DIR"/images/*.tar; do
-    [ -f "$img" ] || continue
-    info "导入镜像 $(basename "$img")…"
-    # docker load 能自动识别 gzip，但老版本 Docker 不一定认 —— 双保险
-    if ! docker load -i "$img" >/dev/null 2>&1; then
-      case "$img" in
-        *.gz|*.tgz) gunzip -c "$img" | docker load >/dev/null || die "镜像导入失败：$img" ;;
-        *) die "镜像导入失败：$img" ;;
+  # 选镜像文件。
+  # ⚠ 注意：不能直接用 "${repo}-*.tar.gz" —— 因为 `cuoti-analytics-` 是
+  #   `cuoti-analytics-ocr-` 的**前缀**，会选错文件。
+  # 所以要求版本号那段**以数字开头**（版本号总是数字开头，ocr 那个是字母开头）。
+  pick_image() {
+    local repo="$1" f base
+    # 1) 带架构后缀的：<repo>-<版本>-<架构>.tar.gz
+    for f in "$SRC_DIR/images/$repo"-*".tar.gz" "$SRC_DIR/images/$repo"-*".tar"; do
+      [ -f "$f" ] || continue
+      base="$(basename "$f")"
+      case "$base" in
+        "$repo-"[0-9]*"-${ARCH}.tar.gz"|"$repo-"[0-9]*"-${ARCH}.tar")
+          echo "$f"; return 0 ;;
       esac
+    done
+    # 2) 单架构旧包（v1.1.16 / v1.1.17 那种，没有架构后缀）
+    for f in "$SRC_DIR/images/$repo"-*".tar.gz" "$SRC_DIR/images/$repo"-*".tar"; do
+      [ -f "$f" ] || continue
+      base="$(basename "$f")"
+      case "$base" in
+        "$repo-"[0-9]*".tar.gz"|"$repo-"[0-9]*".tar")
+          echo "$f"; return 0 ;;
+      esac
+    done
+    return 1
+  }
+
+  FOUND=0
+  for repo in cuoti-analytics cuoti-analytics-ocr; do
+    if IMG="$(pick_image "$repo")"; then
+      load_one "$IMG"
+      FOUND=1
     fi
-    ok "已导入 $(basename "$img")"
   done
+  [ "$FOUND" = "1" ] || die "包里没找到镜像文件（images/ 目录为空或命名不对）"
 else
   warn "包里没有 images/ 目录 —— 跳过镜像导入（如果镜像是别处 load 过的可以忽略）"
 fi
@@ -126,6 +178,27 @@ info "版本 ${VERSION}"
 
 docker image inspect "cuoti-analytics:${VERSION}" >/dev/null 2>&1 \
   || die "找不到镜像 cuoti-analytics:${VERSION}（images/*.tar 是否完整？）"
+
+# --- 架构预检：镜像架构必须和本机一致 ---
+# 不一致的话，容器启动时才报 "exec format error" —— 那是**启动后**的报错，
+# 日志里只有一行，谁看了都要懵。这里提前拦下来，并把话说清楚。
+IMG_ARCH="$(docker image inspect "cuoti-analytics:${VERSION}" --format '{{.Architecture}}' 2>/dev/null || echo '?')"
+if [ "$IMG_ARCH" != "$ARCH" ]; then
+  # 架构不一致。有 QEMU 模拟的话其实**能跑**（只是慢很多）——
+  # 那就提醒一下继续；跑不了就直接拦下来，别让用户去猜 'exec format error'。
+  if docker run --rm --entrypoint /bin/sh "cuoti-analytics:${VERSION}" -c true >/dev/null 2>&1; then
+    warn "镜像架构是 ${IMG_ARCH}，本机是 ${ARCH} —— 这台机器能模拟运行，继续。"
+    warn "但会慢很多，正式环境建议换成 '-${ARCH}' 的离线包。"
+  else
+    die "镜像架构和服务器对不上！
+  镜像 cuoti-analytics:${VERSION} 是 ${IMG_ARCH} 的
+  而这台服务器是 ${HOST_MACHINE}（${ARCH}）
+  —— 装上去容器根本起不来，只报 'exec format error'，很难看出真实原因。
+  请下载带 '-${ARCH}' 后缀的离线包。"
+  fi
+else
+  ok "镜像架构校验通过（${IMG_ARCH}）"
+fi
 
 # ------------------------- 4. .env -------------------------
 ENV_FILE="$INSTALL_DIR/.env"
