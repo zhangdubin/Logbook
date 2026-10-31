@@ -1,0 +1,85 @@
+# docker-compose.offline.yml —— 离线部署版（镜像已预构建，不在服务器上构建）
+# ============================================================================
+# 与 docker-compose.yml 的区别只有一个：**没有 build: 段**。
+#
+# 原因：离线服务器上 `docker build` 会卡在三个地方 ——
+#   1) 拉基础镜像 node:24-alpine / python:3.12-slim-bookworm（要 Docker Hub）
+#   2) `npm ci`（要 npm registry）
+#   3) OCR 镜像的 `pip install`（要 pypi 镜像源）
+# 所以离线包把镜像**提前构建好**，`docker save` 成 tar 带走，
+# 到服务器上 `docker load` 完直接跑，一个字节都不用下。
+#
+# 启动：
+#   docker compose -f docker-compose.offline.yml up -d
+#   docker compose -f docker-compose.offline.yml --profile ocr up -d
+# ============================================================================
+
+name: cuoti-analytics
+
+services:
+  app:
+    # ★ 离线版用这一行（镜像来自 images/*.tar，已 docker load 进来）
+    image: cuoti-analytics:${VERSION:-1.1.15}
+    container_name: cuoti-analytics
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-5181}:5181"
+    environment:
+      NODE_ENV: production
+      PORT: "5181"
+      HOST: "0.0.0.0"
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.minimax.chat/v1}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-MiniMax-M3.1-Flash}
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-25000}
+      OCR_SERVICE_URL: ${OCR_SERVICE_URL:-}
+      SEED_DEMO: ${SEED_DEMO:-false}
+      DEMO_MODE: ${DEMO_MODE:-false}
+    volumes:
+      - cuoti-data:/app/server/data
+      - cuoti-uploads:/app/server/uploads
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:5181/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ---------------------------------------------------------------------
+  # 本地 OCR 侧车（可选，离线可用 —— 模型打包在镜像里）
+  # ---------------------------------------------------------------------
+  ocr:
+    profiles: ["ocr"]
+    image: cuoti-analytics-ocr:${VERSION:-1.1.15}
+    container_name: cuoti-ocr
+    restart: unless-stopped
+    environment:
+      OCR_HOST: "0.0.0.0"
+      OCR_PORT: "8868"
+      OCR_MAX_BYTES: "12582912"
+    expose:
+      - "8868"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8868/health',timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  cuoti-data:
+  cuoti-uploads:
