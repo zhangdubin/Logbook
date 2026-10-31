@@ -726,7 +726,7 @@ npx tsc --noEmit  0 错误
 
 ---
 
-## 9. 线上问题修复（v1.1.13 ~ v1.1.16）
+## 9. 线上问题修复（v1.1.13 ~ v1.1.17）
 
 > **这两个版本都不涉及识别率** —— §8 的**四档基准数字不变**（数据没变）。只修**三个线上问题**，但其中第一个的排查过程值得完整写下来。
 >
@@ -734,6 +734,7 @@ npx tsc --noEmit  0 错误
 > - **v1.1.14**：补上**知识点订正脚本**（`server/repair-knowledge-points.js`）与**启动自动订正** —— v1.1.13 的部署包里**没有**这个文件
 > - **v1.1.15**：**在线更新**的失败时机与失败呈现（下载前预检 + 指引保留换行 + 容器部署别用在线更新）
 > - **v1.1.16**：**新增离线部署方案**（服务器完全不能上网时用）
+> - **v1.1.17**：**版本号收敛到单一可信来源**（不再静默装错版本）
 
 ### 9.1 「识别后自己跳转到空白页面」—— **用户看到的现象 ≠ 技术原因**
 
@@ -969,7 +970,54 @@ EACCES: permission denied, copyfile '/tmp/cuoti-update-xxx/extracted/cuoti-analy
 
 源码目录里可能有 **600** 的文件（某些编辑器就是这么存的），直接打包过去会让服务器上**非 root 的账号**读不了 compose 文件 —— 打包时统一 `chmod 644` / `755`。
 
-### 9.6 本版的验收数字
+### 9.6 v1.1.17：版本号收敛到单一可信来源
+
+**触发原因**：上一版发现离线 compose 里写死了 `image: cuoti-analytics:${VERSION:-1.1.15}` —— **写死的版本号永远过时**。顺着这条线查下去，发现了**更严重的问题**。
+
+**用户看到的现象**：页面显示的版本号和实际代码对不上 —— **没法判断自己装的是哪一版**，出问题也**复现不了**。
+
+#### 版本号在三处各不相干
+
+| 位置 | 原来的写法 | 会出什么错 |
+| --- | --- | --- |
+| `docker-compose.yml` 的 `build.args` | `VERSION: ${VERSION:-1.0.0}` | `.env` 里没写 → **把 1.0.0 烧进镜像** |
+| `docker-compose.yml` 的 `image` | `${VERSION:-1.0.0}` | 镜像标签变成 1.0.0 |
+| `deploy/docker-compose.offline.yml` 的 `image` | `${VERSION:-1.1.15}` | 写死 1.1.15，**永远过时** |
+
+> **最要命的是第一条** —— `install-docker.sh` 生成的 `.env` **从来没写过 `VERSION`**。
+> 所以「装完之后手动 `docker compose up -d --build` 升级」这条路径，**每次都会把版本号重新烧成 1.0.0**。
+
+#### 修法：收敛到单一可信来源
+
+| # | 做法 |
+| --- | --- |
+| ① | **Dockerfile 自己会读 package.json**：`ARG VERSION=""` + `RUN V="${VERSION:-$(node -p "require('/app/package.json').version")}" && …` —— **传了就用传的，没传就从 package.json 读**，两边都不会错 |
+| ② | **compose 不再传 `build.args.VERSION`** —— 传了反而可能传错 |
+| ③ | **镜像标签兜底改成 `latest`**（**中性、不会过时**）；需要精确版本号的场景由 `docker-compose.override.yml` 提供 —— `install-docker.sh` 写死 `image: cuoti-analytics:${IMAGE_TAG}`，**不依赖环境变量** |
+| ④ | **离线 compose 改成缺 VERSION 就报错**：`image: cuoti-analytics:${VERSION:?离线包：请在 .env 里设置 VERSION（install-offline.sh 会自动写入）}` |
+| ⑤ | **`install-docker.sh` 生成的 `.env` 补上 `VERSION=`** |
+| ⑥ | **`install-offline.sh` 去掉写死的 `\|\| echo "1.1.15"`** —— 读不到 package.json **直接报错**，**绝不猜版本号** |
+
+#### 实测
+
+模拟「老安装（`.env` 里没有 `VERSION`）」跑 `docker compose up -d --build`：
+
+```text
+容器里报的版本：1.1.16     ← 修复前是 1.0.0
+```
+
+离线 compose 缺 `VERSION`：
+
+```text
+error while interpolating services.app.image: required variable VERSION is missing a value:
+离线包：请在 .env 里设置 VERSION（install-offline.sh 会自动写入）
+```
+
+> **【通则】缺失时宁可响亮报错，也不要兜底一个可能过期的值。**
+> 一个兜底出来的旧版本号，会让「页面显示的版本」和「实际代码」**长期不一致** —— 这种 bug **比直接报错难查得多**：用户报障时说的版本是错的，复现不了，日志也对不上。
+> **三个来源的版本号要收敛到一个**；真的缺了，**让它当场崩**。
+
+### 9.7 本版的验收数字
 
 ```
 npm test          infer 138 + model 14 + advice 43 + engine 9   全绿
@@ -985,6 +1033,8 @@ v1.1.15 容器实测    旧权限环境：预检即中止（零下载）
 离线部署实测        全新服务器（无镜像）→ 镜像导入 → 容器 healthy → 健康检查通过
                    → 登录 OK → 拍照识别 OK（本地 OCR 0.95）
 发布包复测          从 GitHub Release 下载 221.8MB 离线包，在干净环境重装一遍，全流程通过
+版本号实测          老安装（.env 无 VERSION）+ docker compose up -d --build
+                   → 容器报 1.1.16（修复前是 1.0.0）
 ```
 
 ---
