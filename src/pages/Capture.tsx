@@ -220,6 +220,15 @@ export default function Capture() {
 
   /* ------------------------------ 识别不准时的三个出口 ------------------------------ */
   /** 回到裁剪界面重新框选 */
+  /** 「查看 OCR 原始文字」：展开原文并滚过去 */
+  const showOcrText = () => {
+    const el = document.getElementById('ocr-raw-text')
+    if (!el) return
+    const details = el as HTMLDetailsElement
+    details.open = true
+    details.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+
   const recrop = () => {
     const first = photos[0]
     if (!first) {
@@ -520,7 +529,7 @@ export default function Capture() {
                   </AlertBox>
                 )}
 
-                <RecognitionQualityCard result={result} />
+                <RecognitionQualityCard result={result} onShowOcrText={showOcrText} />
 
                 <Card
                   title="核对识别结果"
@@ -555,12 +564,13 @@ export default function Capture() {
                     subjectNotice={subjectNotice}
                   />
                   {safeText(result.draft.ocrText) && (
-                    <details className="mt-4 rounded-xl border border-ink-200 bg-ink-50/60 px-3 py-2">
-                      <summary className="cursor-pointer text-xs font-bold text-ink-500">查看 OCR 原始文字</summary>
-                      <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-ink-500">
-                        {safeText(result.draft.ocrText)}
-                      </pre>
-                    </details>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm mt-4"
+                      onClick={showOcrText}
+                    >
+                      📄 查看 OCR 原始文字
+                    </button>
                   )}
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
@@ -581,7 +591,20 @@ export default function Capture() {
                 </Card>
 
                 <Card title="AI 分析结果" subtitle="识别与归因是同一份模型输出，保存后可在详情页继续查看">
-                  <AnalysisPanel analysis={result.analysis} pipeline={result.pipeline} />
+                  <AnalysisPanel
+                    analysis={result.analysis}
+                    pipeline={result.pipeline}
+                    context={{
+                      subject: form.subject,
+                      stem: form.stem,
+                      options: form.options,
+                      myAnswer: form.myAnswer,
+                      correctAnswer: form.correctAnswer,
+                      knowledgePoints: form.knowledgePoints,
+                      errorType: form.errorType,
+                    }}
+                    studentId={currentStudentId}
+                  />
                 </Card>
               </>
             ) : (

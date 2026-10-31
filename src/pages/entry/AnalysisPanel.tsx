@@ -8,8 +8,13 @@
 import { ERROR_TYPE_COLOR, ERROR_TYPE_LABEL } from '@/lib/types'
 import type { AIAnalysis, PhotoAnalysisResponse } from '@/lib/types'
 import { AlertBox, Badge, Progress, Spinner } from '@/components/ui'
+import { useNavigate } from 'react-router-dom'
 import type { ReactNode } from 'react'
-import { asArray, kpName, safeText, safeTexts } from './kpShape'
+import { asArray, kpName, kpNames, safeText, safeTexts } from './kpShape'
+import { AskAi } from './AskAi'
+import type { AskAiContext } from './AskAi'
+import { SolutionSteps } from '@/components/SolutionSteps'
+import { MathText } from '@/components/MathText'
 
 function ConfidencePill({ value }: { value: number }) {
   const pct = Math.round(Math.min(1, Math.max(0, value)) * 100)
@@ -17,6 +22,39 @@ function ConfidencePill({ value }: { value: number }) {
   return (
     <span className="tag ring-1" style={{ background: `${color}1a`, color, boxShadow: `inset 0 0 0 1px ${color}40` }}>
       置信度 {pct}%
+    </span>
+  )
+}
+
+/**
+ * 「这段讲解是谁写的」徽章。
+ * 用户反馈「AI 辅助的也不明显」—— 分析结论顶部必须一眼看出
+ * 这是大模型现场生成的，还是本地固定模板套出来的。
+ */
+function SourceBadge({ analysis }: { analysis: AIAnalysis }) {
+  const byModel = analysis.byModel === true
+  const model = safeText(analysis.model)
+  if (byModel) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-violet-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm">
+        <span aria-hidden>🤖</span>
+        <span>AI 生成{model ? `（${model}）` : ''}</span>
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-lg bg-ink-100 px-2.5 py-1 text-[11px] font-bold text-ink-600 ring-1 ring-ink-200">
+      <span aria-hidden>📋</span>
+      <span>本地知识库模板</span>
+    </span>
+  )
+}
+
+/** 局部小标记：这一块也是 AI 写的 */
+function AiMark() {
+  return (
+    <span className="tag bg-blue-50 text-[11px] text-blue-700 ring-1 ring-blue-200" title="这一段由 AI 生成">
+      🤖 AI
     </span>
   )
 }
@@ -54,12 +92,18 @@ export function AnalysisPanel({
   pipeline,
   loading = false,
   onAnalyze,
+  context,
+  studentId,
 }: {
   analysis?: AIAnalysis | null
   /** 识别链路信息（拍照识别时由后端返回） */
   pipeline?: PhotoAnalysisResponse['pipeline']
   loading?: boolean
   onAnalyze?: () => void
+  /** 题目上下文：让「问 AI」知道在问哪道题（可选，不传也能用） */
+  context?: AskAiContext
+  /** 当前学生 id：问 AI 时按这个孩子的学情回答 */
+  studentId?: string
 }) {
   if (loading) {
     return (
@@ -91,11 +135,44 @@ export function AnalysisPanel({
     )
   }
 
+  const navigate = useNavigate()
   const diagnosis = (analysis.diagnosis ?? {}) as AIAnalysis['diagnosis']
   const color = ERROR_TYPE_COLOR[diagnosis?.type] ?? '#3b63f6'
 
+  const byModel = analysis.byModel === true
+
   return (
     <div className="space-y-3">
+      {/* 这段分析是谁写的 —— 「AI 辅助」要一眼可见 */}
+      <div className="rounded-xl border border-ink-200 bg-white p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <SourceBadge analysis={analysis} />
+          {byModel ? (
+            <span className="text-[11px] leading-relaxed text-ink-500">
+              这份讲解是大模型看着这道题现场写的，会结合孩子的错题记录。
+            </span>
+          ) : (
+            <span className="text-[11px] leading-relaxed text-ink-500">
+              当前用的是本地模板（没配 AI 模型，或模型这次没响应），讲解是固定套出来的。
+            </span>
+          )}
+        </div>
+        {!byModel && (
+          <div className="mt-2.5 flex flex-wrap items-center gap-2 rounded-lg bg-ink-50 px-3 py-2">
+            <p className="flex-1 text-[11px] leading-relaxed text-ink-600">
+              配好模型后，这里会给出更贴合这道题的讲解。
+            </p>
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              onClick={() => navigate('/system')}
+            >
+              ⚙️ 去配置 AI 模型
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* 识别链路（拍照识别时才有） */}
       {pipeline && (
         <div className="rounded-xl border border-ink-200 bg-white p-3">
@@ -148,11 +225,23 @@ export function AnalysisPanel({
             <span className="tag bg-ink-100 text-ink-500 ring-1 ring-ink-200">本地引擎</span>
           )}
         </div>
-        <p className="text-sm leading-relaxed text-ink-800">{safeText(analysis.summary)}</p>
+        <p className="text-sm leading-relaxed text-ink-800">
+          <MathText text={safeText(analysis.summary)} />
+        </p>
+        {byModel && (
+          <p className="mt-1.5">
+            <AiMark />
+          </p>
+        )}
       </div>
 
       {/* 归因结论 */}
-      <Section title="归因结论" icon="🎯" open>
+      <Section
+        title="归因结论"
+        icon="🎯"
+        open
+        badge={byModel ? <AiMark /> : undefined}
+      >
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <span
@@ -163,7 +252,9 @@ export function AnalysisPanel({
             </span>
             <ConfidencePill value={Number(diagnosis?.confidence ?? 0)} />
           </div>
-          <p className="text-sm leading-relaxed text-ink-700">{safeText(diagnosis?.reason)}</p>
+          <p className="text-sm leading-relaxed text-ink-700">
+            <MathText text={safeText(diagnosis?.reason)} />
+          </p>
           <div>
             <div className="mb-1 flex items-center justify-between text-[11px] font-semibold text-ink-400">
               <span>判断把握</span>
@@ -178,7 +269,9 @@ export function AnalysisPanel({
                 {safeTexts(diagnosis?.evidence).map((ev, i) => (
                   <li key={i} className="flex gap-1.5 text-xs leading-relaxed text-ink-600">
                     <span className="text-ink-400">•</span>
-                    <span>{ev}</span>
+                    <span>
+                      <MathText text={ev} />
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -257,7 +350,9 @@ export function AnalysisPanel({
                 <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-ink-900 text-[11px] font-bold text-white">
                   {i + 1}
                 </span>
-                <span className="text-sm leading-relaxed text-ink-700">{safeText(rc)}</span>
+                <span className="text-sm leading-relaxed text-ink-700">
+                  <MathText text={safeText(rc)} />
+                </span>
               </li>
             ))}
           </ol>
@@ -266,23 +361,30 @@ export function AnalysisPanel({
 
       {/* 正确解法分步 */}
       {asArray(analysis.correctSteps).length > 0 && (
-        <Section title="正确解法（分步讲解）" icon="🪜" open badge={<span className="text-[11px] text-ink-400">{asArray(analysis.correctSteps).length} 步</span>}>
-          <ol className="space-y-3">
-            {asArray(analysis.correctSteps).map((raw, i) => {
-              const step = (raw ?? {}) as { title?: unknown; detail?: unknown }
-              return (
-                <li key={i} className="rounded-xl bg-ink-50/70 p-3">
-                  <p className="flex items-center gap-2 text-sm font-bold text-ink-800">
-                    <span className="grid h-5 w-5 place-items-center rounded-md bg-brand-600 text-[11px] text-white">
-                      {i + 1}
-                    </span>
-                    {safeText(step.title)}
-                  </p>
-                  <p className="mt-1 pl-7 text-xs leading-relaxed text-ink-600">{safeText(step.detail)}</p>
-                </li>
-              )
+        <Section
+          title="正确解法（分步讲解）"
+          icon="🪜"
+          open
+          badge={
+            <span className="flex items-center gap-1.5">
+              {byModel && <AiMark />}
+              <span className="text-[11px] text-ink-400">{asArray(analysis.correctSteps).length} 步</span>
+            </span>
+          }
+        >
+          {/* 解题步骤：文字 + SVG 示意图（图形由后端确定性推导，没有就只显示文字） */}
+          <SolutionSteps
+            steps={asArray(analysis.correctSteps).map((raw) => {
+              const step = (raw ?? {}) as { title?: unknown; detail?: unknown; figure?: unknown }
+              /* 形状防御：title/detail 可能是对象，先取文本再交给组件 */
+              return {
+                title: safeText(step.title),
+                detail: safeText(step.detail),
+                figure: (step.figure ?? null) as never,
+              }
             })}
-          </ol>
+            subject={context?.subject ?? safeText(analysis.subject)}
+          />
         </Section>
       )}
 
@@ -306,7 +408,9 @@ export function AnalysisPanel({
             {asArray(analysis.tips).map((tip, i) => (
               <li key={i} className="flex gap-2 rounded-lg bg-emerald-50/70 px-3 py-2 text-xs leading-relaxed text-emerald-900">
                 <span aria-hidden>✓</span>
-                <span>{safeText(tip)}</span>
+                <span>
+                  <MathText text={safeText(tip)} />
+                </span>
               </li>
             ))}
           </ul>
@@ -321,12 +425,16 @@ export function AnalysisPanel({
               const q = (raw ?? {}) as { stem?: unknown; answer?: unknown; analysis?: unknown }
               return (
                 <div key={i} className="rounded-xl border border-ink-200 p-3">
-                  <p className="text-sm font-semibold text-ink-800">{safeText(q.stem)}</p>
+                  <p className="text-sm font-semibold text-ink-800">
+                    <MathText text={safeText(q.stem)} />
+                  </p>
                   <p className="mt-1.5 text-xs text-ink-500">
                     <span className="font-bold text-emerald-600">答案：</span>
-                    {safeText(q.answer)}
+                    <MathText text={safeText(q.answer)} />
                   </p>
-                  <p className="mt-1 text-xs leading-relaxed text-ink-600">{safeText(q.analysis)}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-ink-600">
+                    <MathText text={safeText(q.analysis)} />
+                  </p>
                 </div>
               )
             })}
@@ -361,6 +469,23 @@ export function AnalysisPanel({
           </div>
         </Section>
       )}
+
+      {/* 问 AI：就地展开，不跳页面 */}
+      <div className="rounded-xl border border-ink-200 bg-white p-3">
+        <p className="mb-2 text-xs font-bold text-ink-700">还有不明白的？直接问 AI</p>
+        <AskAi
+          context={{
+            subject: context?.subject ?? safeText(analysis.subject),
+            stem: context?.stem,
+            options: context?.options,
+            myAnswer: context?.myAnswer,
+            correctAnswer: context?.correctAnswer,
+            knowledgePoints: kpNames(analysis.knowledgePoints),
+            errorType: context?.errorType,
+          }}
+          studentId={studentId}
+        />
+      </div>
     </div>
   )
 }

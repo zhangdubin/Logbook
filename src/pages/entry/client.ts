@@ -15,6 +15,8 @@ import { mockApi } from '@/pages/__mock__'
 import type {
   AIAnalysis,
   AISettings,
+  ChatMessage,
+  ChatResponse,
   KnowledgePointRef,
   Paged,
   PhotoAnalysisRequest,
@@ -161,6 +163,18 @@ export const dataClient = {
       return 'unknown'
     }
   },
+
+  /* -------- AI 助手 -------- */
+  /**
+   * 问 AI（POST /api/ai/chat）。
+   * 没有演示实现：问不动就如实报错，不拿假答案糊弄用户。
+   */
+  chat: (payload: {
+    studentId?: string
+    message: string
+    history?: ChatMessage[]
+    questionId?: string
+  }): Promise<ChatResponse> => api.chat(payload),
 
   /* -------- 知识点 -------- */
   getKnowledgePoints: (subject?: string): Promise<KnowledgePointRef[]> =>

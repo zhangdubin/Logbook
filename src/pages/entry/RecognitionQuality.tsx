@@ -7,9 +7,12 @@
  */
 
 import { Badge, Card, Progress } from '@/components/ui'
+import { MathText } from '@/components/MathText'
 import type { PhotoAnalysisResponse } from '@/lib/types'
 import type { ConfMap, FieldKey } from './formModel'
 import { asArray, safeText, safeTexts } from './kpShape'
+import { AiAssistBlock } from './AiAssistBlock'
+import { readAiAssist } from './aiAssist'
 
 /* ------------------ 置信度分级与字段中文名 ------------------ */
 
@@ -181,15 +184,27 @@ function engineHint(engine: string): string {
   }
 }
 
-export function RecognitionQualityCard({ result }: { result: PhotoAnalysisResponse }) {
+export function RecognitionQualityCard({
+  result,
+  onShowOcrText,
+}: {
+  result: PhotoAnalysisResponse
+  /** 点「查看 OCR 原始文字」时展开原文 */
+  onShowOcrText?: () => void
+}) {
   const draft = result.draft
   const pipeline = result.pipeline
   const confidence = typeof draft.confidence === 'number' ? draft.confidence : 0
   const level = confLevel(confidence)
+  /* AI 到底参与了哪一步（后端没给 aiAssist 时退回保守推断） */
+  const assist = readAiAssist(pipeline, result.analysis)
 
   return (
-    <Card title="识别质量" subtitle="这次识别走的是哪条链路、把握有多大">
+    <Card title="识别质量" subtitle="这次识别是怎么做出来的、把握有多大">
       <div className="space-y-4">
+        {/* 这次识别是怎么做出来的 */}
+        <AiAssistBlock assist={assist} onShowOcrText={onShowOcrText} />
+
         {/* 整体置信度 */}
         <div className="flex items-end justify-between gap-3">
           <div>
@@ -252,6 +267,22 @@ export function RecognitionQualityCard({ result }: { result: PhotoAnalysisRespon
               })}
             </div>
           </div>
+        )}
+
+        {/* OCR 原文：识别出来的原始文字，公式用 MathText 渲染（原来显示成 $x^2$ 源码，
+            学生看着像「识别坏了」） */}
+        {safeText(draft.ocrText) && (
+          <details
+            id="ocr-raw-text"
+            className="rounded-xl border border-ink-200 bg-ink-50/60 px-3 py-2"
+          >
+            <summary className="cursor-pointer text-xs font-bold text-ink-500">
+              查看 OCR 原始文字
+            </summary>
+            <div className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-ink-500">
+              <MathText text={safeText(draft.ocrText)} />
+            </div>
+          </details>
         )}
 
         {/* 需要注意 */}
