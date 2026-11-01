@@ -520,12 +520,19 @@ def _enhance_for_model(image_bytes: bytes) -> tuple[bytes, str, int, int, str]:
     降级链（任何一步失败都不抛，往下退，绝不让整条识别链路挂掉）：
         LAB-CLAHE -> 对比度增强 -> 仅 EXIF 矫正 + 尺寸归一化 -> 原图
 
-    实测（scripts/ocr-bench 的 10 张样例，real + hard 两档，
-    用「只跑 original 变体」的侧车隔离掉二次增强）：
-        原图      平均 CER 36.45%
-        增强图    平均 CER 29.30%
-    也就是这张图给**任何**识别引擎（OCR 或视觉模型）看都更好，
-    hard 档提升最明显（57.8->51.2 / 59.2->53.6 / 60.0->49.8 / 77.8->57.8 / 56.3->40.6）。
+    实测（scripts/ocr-bench/bench-enhanced.py，10 张样例 real + hard 两档，
+    docker 1.1.19 发行环境）：
+        real  档    原图 CER  4.50%  ->  增强图 CER  0.23%   (-4.27 个百分点)
+        hard  档    原图 CER 69.35%  ->  增强图 CER 53.22%   (-16.13 个百分点)
+        总体        原图 CER 36.93%  ->  增强图 CER 26.73%   (-10.20 个百分点)
+        变差的样例：0 个
+    也就是这张图给**任何**识别引擎（OCR 或视觉模型）看都更好。
+
+    ⚠️ 测这个数字**必须隔离二次增强**，否则结论会反过来：
+       把增强图塞回**会自己做 CLAHE 的** OCR 管线 = 增强叠增强 = 更差。
+       正确做法是起一个 `OCR_VARIANTS=original` 的侧车（只解码+EXIF+尺寸归一化），
+       再用完整侧车的 /preprocess 拿增强图，**同一张图、同一台引擎，只换喂进去的图**。
+       复现命令见 scripts/ocr-bench/bench-enhanced.py 的文件头。
 
     返回 (图片字节, 变体名, 宽, 高, mime)
     """

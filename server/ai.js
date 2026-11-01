@@ -710,7 +710,18 @@ function inferDiagnosis(input) {
   }
 }
 
-function inferTypeFromAnswers({ my, cor, difficulty, qtype, subject, rawMy, rawCor }) {
+/**
+ * 从作答推断错因类型。
+ *
+ * ⚠️ **导出来是为了能做自动化回归测试**（scripts/test-error-type.mjs）。
+ *
+ * 为什么要单独测这个函数：它**曾经一次都没被执行过** ——
+ * 建题时 errorType 默认填了 'knowledge_gap'，
+ * 分析逻辑 `input.errorType || inferTypeFromAnswers(...)` 的 `||` 永远短路，
+ * 于是**所有错题都被判成「知识盲点」**，判定逻辑形同虚设。
+ * 这种 bug 只靠手工点几下发现不了 —— 界面上「看起来在工作」。
+ */
+export function inferTypeFromAnswers({ my, cor, difficulty, qtype, subject, rawMy, rawCor }) {
   // 完全空白 / 答非所问 -> 知识盲点
   if (!my) return 'knowledge_gap'
   if (cor && my === cor) return 'expression'
