@@ -1,0 +1,73 @@
+{
+  "math": {
+    "lines": [
+      "三、小明身高 1.5 米，长方形的长是 8 米，宽是 5 米。",
+      "求这个长方形的面积和周长。",
+      "A. 40 平方米  B. 13 米  C. 26 平方米  D. 13 平方米"
+    ],
+    "subject": "数学",
+    "keywords": [
+      "长方形",
+      "面积",
+      "周长",
+      "平方米"
+    ]
+  },
+  "chinese": {
+    "lines": [
+      "四、给下列加点字选择正确读音。",
+      "停（ting / ding）  削（xue / xiao）  载（zai / zai）",
+      "抄写下面的词语，并造一个句子。"
+    ],
+    "subject": "语文",
+    "keywords": [
+      "加点字",
+      "读音",
+      "抄写",
+      "词语",
+      "句子"
+    ]
+  },
+  "english": {
+    "lines": [
+      "5. Read and choose the best answer.",
+      "What is the girl doing?",
+      "A. She is reading a book.  B. She is playing football.",
+      "C. She is eating dinner.  D. She is flying a kite."
+    ],
+    "subject": "英语",
+    "keywords": [
+      "Read and choose",
+      "What is",
+      "She is"
+    ]
+  },
+  "physics": {
+    "lines": [
+      "2. 一个物体在光滑水平面上受到 5N 的拉力，",
+      "质量是 2kg，求它的加速度和受到的摩擦力大小。"
+    ],
+    "subject": "物理",
+    "keywords": [
+      "物体",
+      "拉力",
+      "加速度",
+      "摩擦力"
+    ]
+  },
+  "math_word": {
+    "lines": [
+      "甲、乙两地相距 240 千米，一辆汽车从甲地出发，",
+      "每小时行 60 千米，同时另一辆摩托车从乙地出发，",
+      "每小时行 40 千米，几小时后两车相遇？",
+      "A. 1 小时  B. 2 小时  C. 2.4 小时  D. 3 小时"
+    ],
+    "subject": "数学",
+    "keywords": [
+      "相距",
+      "出发",
+      "相遇",
+      "每小时"
+    ]
+  }
+}
