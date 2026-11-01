@@ -77,10 +77,45 @@ function useDrawIn(reduced: boolean) {
   return on
 }
 
+/**
+ * 逐个「画出来」的错峰动画。
+ *
+ * 为什么不只是整体淡入：整体淡入只说明「有张图」，
+ * **逐个画出来**才说明「**这个数是怎么来的**」——
+ * 条形图从 0 长到该有的长度、分数条填到该有的比例，
+ * 学生眼睛跟着看一遍，就懂了「原来要填这么多」。
+ *
+ * @param reduced 系统要求减少动画 → 全部直接显示
+ * @param count   要错峰显示的元素个数
+ * @param step    每个之间的间隔（毫秒）
+ */
+function useStagger(reduced: boolean, count: number, step = 110) {
+  const [shown, setShown] = useState<boolean[]>(() => new Array(count).fill(true))
+  useEffect(() => {
+    if (reduced) {
+      setShown(new Array(count).fill(true))
+      return
+    }
+    setShown(new Array(count).fill(false))
+    const timers = Array.from({ length: count }, (_, i) =>
+      setTimeout(() => {
+        setShown((prev) => {
+          const next = [...prev]
+          next[i] = true
+          return next
+        })
+      }, 80 + i * step),
+    )
+    return () => timers.forEach(clearTimeout)
+  }, [reduced, count, step])
+  return shown
+}
+
 /* -------------------------------------------------------------------------
  * 数轴
  * ---------------------------------------------------------------------- */
 function NumberLineFigure({ data }: { data: NonNullable<FigureData['numberLine']> }) {
+  const reduced = useReducedMotion()
   const W = 640
   const H = 120
   const PAD = 34
@@ -95,6 +130,9 @@ function NumberLineFigure({ data }: { data: NonNullable<FigureData['numberLine']
   for (let v = Math.ceil(from / stepValue) * stepValue; v <= to; v += stepValue) {
     ticks.push(Number(v.toFixed(6)))
   }
+
+  /* 标记错峰出现：先画正确答案，再画我的答案 —— 差在哪儿一眼就看出来 */
+  const shown = useStagger(reduced, points.length, 240)
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label="数轴示意图">
@@ -115,7 +153,16 @@ function NumberLineFigure({ data }: { data: NonNullable<FigureData['numberLine']
         const tone = TONE[p.tone ?? (i === 0 ? 'a' : 'b')]
         const px = x(p.at)
         return (
-          <g key={`${p.at}-${i}`}>
+          <g
+            key={`${p.at}-${i}`}
+            style={{
+              opacity: shown[i] ? 1 : 0,
+              transform: shown[i] ? 'translateY(0)' : 'translateY(-6px)',
+              transition: reduced
+                ? 'none'
+                : 'opacity .34s ease, transform .34s cubic-bezier(.22,1,.36,1)',
+            }}
+          >
             <circle cx={px} cy={axisY} r={5.5} fill={tone.fill} stroke={tone.stroke} strokeWidth={2.2} />
             <text
               x={px}
@@ -138,6 +185,8 @@ function NumberLineFigure({ data }: { data: NonNullable<FigureData['numberLine']
  * 分数条
  * ---------------------------------------------------------------------- */
 function FractionFigure({ data }: { data: NonNullable<FigureData['fraction']> }) {
+  const reduced = useReducedMotion()
+  const shown = useStagger(reduced, 1, 0)
   const { numerator, denominator, label } = data
   const W = 520
   const H = 74
@@ -150,7 +199,18 @@ function FractionFigure({ data }: { data: NonNullable<FigureData['fraction']> })
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label="分数示意图">
       <rect x={PAD} y={26} width={barW} height={26} rx={6} fill="#e2e8f0" />
-      <rect x={PAD} y={26} width={fillW} height={26} rx={6} fill="#f97316" />
+      {/* 填充部分**从 0 长到该有的比例** —— 眼睛跟着看一遍就知道「要填这么多」 */}
+      <rect
+        x={PAD}
+        y={26}
+        height={26}
+        rx={6}
+        fill="#f97316"
+        style={{
+          width: shown[0] ? fillW : 0,
+          transition: reduced ? 'none' : 'width .6s cubic-bezier(.22,1,.36,1)',
+        }}
+      />
       <text x={PAD + barW / 2} y={45} textAnchor="middle" fontSize={14} fontWeight={700} fill="#ffffff">
         {label ?? `${numerator}/${denominator}`}
       </text>
@@ -168,7 +228,9 @@ function FractionFigure({ data }: { data: NonNullable<FigureData['fraction']> })
  * 条形对比
  * ---------------------------------------------------------------------- */
 function BarFigure({ data }: { data: NonNullable<FigureData['bar']> }) {
+  const reduced = useReducedMotion()
   const { items, unit } = data
+  const shown = useStagger(reduced, items.length ?? 0, 160)
   const W = 520
   const rowH = 40
   const PAD = 12
@@ -188,7 +250,18 @@ function BarFigure({ data }: { data: NonNullable<FigureData['bar']> }) {
               {it.label}
             </text>
             <rect x={labelW} y={y + 4} width={barArea} height={20} rx={4} fill="#f1f5f9" />
-            <rect x={labelW} y={y + 4} width={Math.max(w, 2)} height={20} rx={4} fill="#0ea5e9" />
+            {/* 每根条**从 0 长到该有的长度**，一根一根来 */}
+            <rect
+              x={labelW}
+              y={y + 4}
+              height={20}
+              rx={4}
+              fill="#0ea5e9"
+              style={{
+                width: shown[i] ? Math.max(w, 2) : 0,
+                transition: reduced ? 'none' : 'width .55s cubic-bezier(.22,1,.36,1)',
+              }}
+            />
             <text x={labelW + w + 8} y={y + 19} fontSize={13} fontWeight={700} fill="#0369a1">
               {it.value}
               {unit ?? ''}
