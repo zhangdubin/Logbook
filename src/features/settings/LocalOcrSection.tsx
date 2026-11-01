@@ -55,7 +55,11 @@ export function LocalOcrSection({
         <input
           className="input font-mono text-[13px]"
           value={form.ocrBaseUrl}
-          placeholder={suggestion || 'http://127.0.0.1:8868'}
+          /* ⚠️ 没有后端推荐值时（比如后端是旧版），**不要**再给一个
+             可能错的**具体地址** —— 那正是这次事故的根源：
+             用户复制了一个在容器里必然失败的地址。
+             给**中性占位符**，让 hint 去讲规则。 */
+          placeholder={suggestion || 'http://<主机名或容器名>:8868'}
           onChange={(e) => onChange({ ocrBaseUrl: e.target.value })}
           disabled={!form.ocrEnabled}
           autoComplete="off"
