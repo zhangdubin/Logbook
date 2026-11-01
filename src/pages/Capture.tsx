@@ -208,7 +208,10 @@ export default function Capture() {
           studentId: currentStudentId,
           grade: grade || currentStudent?.grade,
           images: photos.map((p) => ({ id: p.id, url: p.dataUrl, dataUrl: p.dataUrl })),
-          aiAnalysis: result?.analysis ?? null,
+          /* 把**识别链路信息一起存下来** ——
+             用户当天拍照时看得到「AI 干了什么」，但过两天回看错题时也得看得到。
+             不存就只剩一个结果，没人知道这个结果的可信度从哪来。 */
+          aiAnalysis: result ? { ...result.analysis, pipeline: result.pipeline } : null,
         }),
       )
       push('已保存到错题本 ✅', 'success')

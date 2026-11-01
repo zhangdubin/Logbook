@@ -253,6 +253,13 @@ export interface AIAnalysis {
   /** 一句话总结 */
   summary: string
   createdAt: string
+  /**
+   * 识别链路信息（拍照录入时一并存下）。
+   *
+   * 存它的理由：用户当天拍照时看得到「AI 干了什么」，
+   * 但**过两天回看错题时也得看得到** —— 不存就只剩一个结果，没人知道可信度从哪来。
+   */
+  pipeline?: PhotoPipeline
 }
 
 export interface PhotoAnalysisRequest {
@@ -281,14 +288,58 @@ export interface PhotoAnalysisResponse {
   }
   analysis: AIAnalysis
   /** 识别链路说明：用了哪条引擎、置信度怎么来的、有哪些警告 */
-  pipeline?: {
-    /** 'vision-model' | 'local-ocr' | 'hint-fallback' */
-    ocrEngine: string
-    ocrEngineLabel: string
-    model?: string
-    /** 置信度融合的各分量 */
-    signals?: { name: string; value: number; weight: number }[]
-    warnings?: string[]
+  pipeline?: PhotoPipeline
+}
+
+/**
+ * 识别链路信息。
+ *
+ * **为什么要单独抽成命名类型**：这份信息要**跟着错题一起存下来** ——
+ * 用户拍照录完题、当天看得到「AI 干了什么」，但**过两天回看时也得看得到**。
+ * 所以它要能进 `ai_analysis` 字段被持久化。
+ */
+export interface PhotoPipeline {
+  /** 'vision-model' | 'local-ocr' | 'hint-fallback' */
+  ocrEngine: string
+  ocrEngineLabel: string
+  model?: string
+  /** 置信度融合的各分量 */
+  signals?: { name: string; value: number; weight: number }[]
+  warnings?: string[]
+  /** 版式惩罚系数（≠1 说明识别到的内容偏散） */
+  layoutPenalty?: number
+  /** AI 辅助的可解释信息 —— 「这次识别是怎么做出来的」 */
+  aiAssist?: {
+    /** 这次有没有真的调模型 */
+    usedModel?: boolean
+    /** 'model' = 视觉模型直读图片；'local' = 本地 OCR */
+    engineKind?: 'model' | 'local'
+    modelName?: string
+    /** 哪些字段来自模型 */
+    fieldsFromModel?: string[]
+    /** 哪些字段来自本地 OCR */
+    fieldsFromOcr?: string[]
+    /** 第二遍自校验是否真的改了东西 */
+    secondPass?: boolean
+    /** 有没有做 OCR ↔ 模型交叉核对 */
+    selfChecked?: boolean
+    /** 视觉模型看的是不是增强后的图 */
+    enhancedImage?: boolean
+    enhancedVariant?: string
+    /** 两个引擎的一致度 0~1 */
+    agreement?: number
+    /** 第二遍**采纳了**的修正 */
+    corrections?: { field: string; from?: string; to?: string; reason?: string }[]
+    /** 模型提了、但被安全阀**拒绝**的修正（要说清才可信） */
+    rejected?: { field: string; from?: string; to?: string; reason?: string }[]
+    /** OCR ↔ 模型不一致的地方（只报告，不自动改） */
+    conflicts?: {
+      field: string
+      vision?: string
+      ocr?: string
+      chosen?: string
+      reason?: string
+    }[]
   }
 }
 

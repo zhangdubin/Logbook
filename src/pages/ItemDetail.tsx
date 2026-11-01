@@ -380,6 +380,9 @@ export default function ItemDetail() {
         >
           <AnalysisPanel
             analysis={q.aiAnalysis}
+            /* 识别链路信息随错题一起存下来了 —— 回看时也能知道
+               「这个结果是怎么来的、可信度多少、哪里要人工核对」 */
+            pipeline={q.aiAnalysis?.pipeline}
             loading={analyzing}
             onAnalyze={() => void runAnalyze()}
           />
