@@ -188,6 +188,64 @@ export const OCR_TIMEOUT_MS = Math.max(
   Number(process.env.OCR_TIMEOUT_MS ?? 60000) || 60000,
 )
 
+/**
+ * 把「连不上」翻译成**用户能直接照做的下一步**。
+ *
+ * ⚠️ 为什么要专门写这个函数：
+ *    原来只报「无法连接本地 OCR 服务（ECONNREFUSED），请确认 OCR 服务已启动」——
+ *    **既没说试的是哪个地址，也没说 ECONNREFUSED 到底意味着什么**。
+ *    用户看到这句话只能瞎试：
+ *    「我明明启用了」「我明明连上了」——
+ *    因为「连上了」和「地址对」**根本不是一回事**。
+ *
+ *    ECONNREFUSED 的准确含义是：**域名解析成功了，但那个地址上没有进程在监听**。
+ *    所以问题只可能是两个：
+ *      ① 那个地址上确实没有服务（侧车没起 / 端口写错）
+ *      ② 地址指向了**错误的那台机器**（最常见：容器里写 127.0.0.1）
+ *
+ * @param root  实际试过的地址
+ * @param code  错误码
+ */
+export function explainOcrUnreachable(root, code) {
+  const host = (() => {
+    try {
+      return new URL(root).hostname
+    } catch {
+      return ''
+    }
+  })()
+  const where = root ? `（试的是 ${root}）` : ''
+
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+    return (
+      `本地 OCR 服务地址解析不了（${code}）${where}：` +
+      `这个域名在**当前进程所在的环境里不存在**。` +
+      `如果应用跑在 Docker 里，域名要用**容器名**（如 cuoti-ocr / ocr），` +
+      `不能用宿主机上的名字或 127.0.0.1。` +
+      `（ECONNREFUSED = 地址能解析，但**上面没人接**；` +
+      `ENOTFOUND = 地址本身解析不出来。两者别搞混。）`
+    )
+  }
+
+  if (code === 'ECONNREFUSED') {
+    const isLoopback = host === '127.0.0.1' || host === 'localhost' || host === '::1'
+    return (
+      `连不上本地 OCR 服务（ECONNREFUSED）${where}：` +
+      `**域名解析成功了，但那个地址上没有进程在监听。**` +
+      (isLoopback
+        ? `⚠️ 你填的是**本机地址**——` +
+          `如果应用跑在 **Docker 容器**里，127.0.0.1 指的是**应用容器自己**，` +
+          `不是宿主机、也不是 OCR 容器。` +
+          `请改成**容器名**：http://cuoti-ocr:8868（离线安装）或 http://ocr:8868（在线安装）。`
+        : `请确认 OCR 容器在跑、端口对得上：docker ps 看容器、docker logs 看它的日志。`) +
+      `（ECONNREFUSED = 地址能解析，但**上面没人接**；` +
+      `ENOTFOUND = 地址本身解析不出来。两者别搞混。）`
+    )
+  }
+
+  return `本地 OCR 服务连不上（${code}）${where}`
+}
+
 export async function runLocalOcr({ baseUrl, imageBase64, timeoutMs = OCR_TIMEOUT_MS } = {}) {
   const root = String(baseUrl ?? '').replace(/\/+$/, '')
   if (!root) throw new Error('未配置 OCR 服务地址')
@@ -252,8 +310,9 @@ export async function runLocalOcr({ baseUrl, imageBase64, timeoutMs = OCR_TIMEOU
   } catch (err) {
     if (err?.name === 'AbortError') throw new Error(`OCR 服务超时（${timeoutMs}ms）`)
     const code = err?.cause?.code || err?.code
-    if (code === 'ECONNREFUSED') throw new Error('无法连接本地 OCR 服务（ECONNREFUSED），请确认 OCR 服务已启动')
-    if (code === 'ENOTFOUND') throw new Error('本地 OCR 服务地址无法解析（ENOTFOUND）')
+    if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+      throw new Error(explainOcrUnreachable(root, code))
+    }
     throw err
   } finally {
     clearTimeout(timer)
@@ -355,12 +414,20 @@ export async function probeOcrService({ baseUrl, timeoutMs = 8000 } = {}) {
   } catch (err) {
     if (err?.name === 'AbortError') return { reachable: false, detail: `OCR 服务超时（${timeoutMs}ms）` }
     const code = err?.cause?.code || err?.code
-    if (code === 'ECONNREFUSED') return { reachable: false, detail: '无法连接本地 OCR 服务（ECONNREFUSED）' }
-    if (code === 'ENOTFOUND') return { reachable: false, detail: '本地 OCR 服务地址无法解析（ENOTFOUND）' }
+    if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+      return { reachable: false, detail: explainOcrUnreachable(root, code) }
+    }
     return { reachable: false, detail: String(err?.message ?? err).slice(0, 120) }
   } finally {
     clearTimeout(timer)
   }
 }
 
-export default { runLocalOcr, extractOcrPairs, stripDataUrl, probeOcrService, preprocessImage }
+export default {
+  runLocalOcr,
+  extractOcrPairs,
+  stripDataUrl,
+  probeOcrService,
+  preprocessImage,
+  explainOcrUnreachable,
+}

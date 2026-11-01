@@ -184,11 +184,13 @@ export function OcrHealthCheck({
         )}
       </div>
 
-      {/* 失败原因原文：折叠起来，用户要查时能展开 */}
+      {/* 失败原因：**默认展开** ——
+          后端现在给的是「试的是哪个地址 + 这意味着什么 + 下一步做什么」，
+          折起来等于白写。折叠只是留给以后可能出现的长文本。 */}
       {info.state === 'unreachable' && info.detail && (
-        <details className="mt-1.5 text-[11px] leading-relaxed text-ink-500">
-          <summary className="cursor-pointer select-none">查看后端返回的原始信息</summary>
-          <p className="mt-1 whitespace-pre-wrap break-words text-ink-400">{info.detail}</p>
+        <details open className="mt-1.5 text-[11px] leading-relaxed text-ink-500">
+          <summary className="cursor-pointer select-none">为什么连不上 · 点这里看后端的原始信息</summary>
+          <p className="mt-1 whitespace-pre-wrap break-words text-ink-500">{info.detail}</p>
         </details>
       )}
 
