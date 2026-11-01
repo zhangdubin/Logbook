@@ -37,6 +37,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyzePhoto } from '../server/ai.js'
+/* 前端的显示规则（依赖无关的 TS，Node 能直接导入）——
+   断言的是**界面到底会显示哪几行**，而不只是字段之间不矛盾。 */
+import {
+  engineSublineParts,
+  shouldShowAgreement,
+  shouldShowEnhanced,
+  shouldShowNoConflictHint,
+} from '../src/pages/entry/aiAssistRules.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
@@ -220,7 +228,64 @@ try {
   }
 
   /* ---------------------------------------------------------------- */
-  console.log('\n=== 3. 逐条对照：报出来的每件事都得真的发生过 ===')
+  console.log('\n=== 3. ⭐ 界面显示规则（改坏了要红） ===')
+  /* ---------------------------------------------------------------- */
+  // 后端说没有模型 → 界面**不许**出现「看的是增强后的图」
+  const localView = {
+    usedModel: false,
+    engineKind: 'local',
+    enhancedImage: false,
+    enhancedVariant: undefined,
+    secondPass: false,
+    selfChecked: false,
+    agreement: undefined,
+    conflictCount: 0,
+  }
+  eq('没有模型 → 不显示增强图', shouldShowEnhanced(localView), false)
+  eq('没有模型 → 不显示一致度', shouldShowAgreement(localView), false)
+  eq('没有模型 → 不显示「没有冲突」（压根没有两个引擎）', shouldShowNoConflictHint(localView), false)
+  const localSub = engineSublineParts(localView, '自动增强')
+  check(
+    '没有模型 → 副标题里没有「增强后的图」',
+    !localSub.some((p) => p.includes('增强')),
+    JSON.stringify(localSub),
+  )
+  check(
+    '没有模型 → 副标题明说「图片没有上传到云端」',
+    localSub.some((p) => p.includes('没有上传到云端')),
+    JSON.stringify(localSub),
+  )
+
+  // ⭐ 关键：**只有 enhancedVariant 有值、但没有模型看过** —— 也不能显示
+  const lyingView = { ...localView, enhancedVariant: 'clahe_color' }
+  eq('只有变体名、模型没看过 → 仍然不显示增强图', shouldShowEnhanced(lyingView), false)
+  const lyingSub = engineSublineParts(lyingView, '自动增强')
+  check(
+    '只有变体名、模型没看过 → 副标题里也没有「增强」',
+    !lyingSub.some((p) => p.includes('增强')),
+    JSON.stringify(lyingSub),
+  )
+
+  // 有模型时该显示的都要显示
+  const modelView = {
+    usedModel: true,
+    engineKind: 'model',
+    enhancedImage: true,
+    enhancedVariant: 'clahe_color',
+    secondPass: true,
+    selfChecked: true,
+    agreement: 0.9,
+    conflictCount: 0,
+  }
+  eq('有模型 → 显示增强图', shouldShowEnhanced(modelView), true)
+  eq('有模型 → 显示一致度', shouldShowAgreement(modelView), true)
+  eq('有模型且无冲突 → 显示「没有冲突」', shouldShowNoConflictHint(modelView), true)
+  const modelSub = engineSublineParts(modelView, '自动增强对比度和颜色')
+  check('有模型 → 副标题里有「增强后的图」', modelSub.some((p) => p.includes('增强后的图')), JSON.stringify(modelSub))
+  check('有模型 → 副标题里有「图片由模型直接理解」', modelSub.some((p) => p.includes('直接理解')), JSON.stringify(modelSub))
+
+  /* ---------------------------------------------------------------- */
+  console.log('\n=== 4. 逐条对照：报出来的每件事都得真的发生过 ===')
   /* ---------------------------------------------------------------- */
   // enhancedImage → 必须真的有模型参与
   check(

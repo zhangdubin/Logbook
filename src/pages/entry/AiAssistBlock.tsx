@@ -14,6 +14,11 @@
 import { Badge } from '@/components/ui'
 import { conflictText, correctionText, enhanceVariantLabel, SOURCE_META, sourceOf } from './aiAssist'
 import type { AiAssist } from './aiAssist'
+import {
+  engineSublineParts,
+  shouldShowAgreement,
+  shouldShowNoConflictHint,
+} from './aiAssistRules'
 import { fieldLabel } from './RecognitionQuality'
 
 function engineHeadline(assist: AiAssist): string {
@@ -32,10 +37,10 @@ function engineHeadline(assist: AiAssist): string {
 function engineSubline(assist: AiAssist): string {
   const parts: string[] = []
   if (assist.modelName) parts.push(assist.modelName)
-  if (assist.usedModel && assist.engineKind === 'model') parts.push('图片由模型直接理解')
-  else parts.push('图片没有上传到云端')
-  if (assist.enhancedImage) parts.push(`看的是增强后的图（${enhanceVariantLabel(assist.enhancedVariant)}）`)
-  if (assist.secondPass || assist.selfChecked) parts.push('模型又自己复查了一遍')
+  /* ⚠️ 显示条件全部走 aiAssistRules —— 那些是**纯函数**，
+     被 scripts/test-ai-assist-honesty.mjs 直接断言。
+     在这里写死条件的话，改坏了没有任何测试会红。 */
+  parts.push(...engineSublineParts(assist, enhanceVariantLabel(assist.enhancedVariant)))
   return parts.join(' · ')
 }
 
@@ -67,6 +72,7 @@ export function AiAssistBlock({
 }) {
   const modelFields = assist.fieldsFromModel
   const ocrFields = assist.fieldsFromOcr
+  const agreement = assist.agreement
   const allFields = [...new Set([...modelFields, ...ocrFields])]
   const needCheck = assist.conflicts.length > 0
 
@@ -84,21 +90,21 @@ export function AiAssistBlock({
       <p className="mt-1 text-[11px] leading-relaxed text-ink-500">{engineSubline(assist)}</p>
 
       {/* 两个引擎的一致度 */}
-      {assist.agreement !== undefined && (
+      {shouldShowAgreement(assist) && typeof agreement === 'number' && (
         <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
           两个引擎的一致度{' '}
           <span
             className={`font-bold ${
-              assist.agreement >= 0.8
+              agreement >= 0.8
                 ? 'text-emerald-600'
-                : assist.agreement >= 0.5
+                : agreement >= 0.5
                   ? 'text-amber-600'
                   : 'text-red-600'
             }`}
           >
-            {Math.round(assist.agreement * 100)}%
+            {Math.round(agreement * 100)}%
           </span>
-          {assist.agreement < 0.6
+          {agreement < 0.6
             ? ' —— 差距较大，下面的冲突请务必人工核对'
             : ' —— 两边读出来的东西基本一致'}
         </p>
@@ -150,7 +156,7 @@ export function AiAssistBlock({
       )}
 
       {/* 没有任何冲突时给一句「可以放心扫一眼」 */}
-      {!needCheck && assist.usedModel && (
+      {!needCheck && shouldShowNoConflictHint(assist) && (
         <p className="mt-2.5 text-[11px] leading-relaxed text-emerald-700">
           ✅ 模型和本地引擎没有发现冲突，扫一眼就能保存。
         </p>
