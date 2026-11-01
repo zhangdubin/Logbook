@@ -45,8 +45,21 @@ if [ "${1:-}" = "--list" ]; then
     echo "本机没有 docker 命令。" >&2
     exit 1
   fi
-  echo "本机在跑的容器（挑一个当参数）："
-  docker ps --format '  {{.Names}}\t{{.Image}}\t{{.Status}}'
+  # 可选过滤：--list [过滤词]
+  FILTER="${2:-}"
+  if [ -n "$FILTER" ]; then
+    # ⚠️ 必须写 ${FILTER} 不能写 $FILTER ——
+    # bash 的变量名解析**是 locale 相关的，会把后面的多字节字符吃进变量名**，
+    # `$FILTER」` 会被当成一个叫「FILTER」的名字 → set -u 直接报错。
+    echo "在跑的容器（过滤「${FILTER}」）："
+    docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | grep -i -- "$FILTER" | sed 's/^/  /' || true
+  else
+    echo "在跑的容器（挑一个当参数）："
+    docker ps --format '  {{.Names}}\t{{.Image}}\t{{.Status}}'
+    echo
+    echo "提示：加个过滤词只看本项目的，例如"
+    echo "  bash scripts/db-query.sh --list cuoti"
+  fi
   echo
   echo "用法：bash scripts/db-query.sh --container <容器名> \"SQL\""
   exit 0

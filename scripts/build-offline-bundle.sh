@@ -98,6 +98,12 @@ docker buildx version >/dev/null 2>&1 && HAVE_BUILDX=1
 
 STAGE="$ROOT/.offline-stage/cuoti-analytics-offline-v${VERSION}"
 rm -rf "$ROOT/.offline-stage"
+
+# 构建中途失败也要把临时目录清掉 ——
+# 否则仓库根目录会**残留几百 MB 未跟踪文件**，
+# `git status` 里赫然躺着一个几百 MB 的目录，一个手滑 `git add -A` 就进仓库了。
+# 用 trap 挂在 EXIT 上：**成功、失败、被 Ctrl-C 中断** 三条路都会清。
+trap 'rm -rf "$ROOT/.offline-stage"' EXIT
 mkdir -p "$STAGE/images"
 
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo '')"
