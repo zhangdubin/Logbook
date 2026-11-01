@@ -384,23 +384,27 @@ export function QuestionForm({
       {/* 错因类型 */}
       <Field
         label={<LabelWithBadge text="错因类型" value={confOf('errorType')} show={useFieldConf} />}
-        required
-        hint="选错也没关系，AI 诊断结果会自动帮你修正"
+        hint="留空让系统自动判断最准；选错也没关系，AI 诊断结果会自动帮你修正"
       >
         <div className="space-y-1.5">
           <select
             className="select"
             style={isLow('errorType') ? LOW_STYLE : undefined}
             value={value.errorType}
-            onChange={(e) => onChange({ errorType: e.target.value as ErrorType })}
+            onChange={(e) => onChange({ errorType: e.target.value as ErrorType | '' })}
           >
+            {/* 错因本来是从作答推出来的，留空（= 未指定）比乱选一个准 */}
+            <option value="">🤖 自动判断（由系统根据作答推断）</option>
             {ERROR_TYPES.map((t) => (
               <option key={t} value={t}>
                 {ERROR_TYPE_LABEL[t]}
               </option>
             ))}
           </select>
-          <p className="text-[11px] leading-relaxed text-ink-500">{ERROR_TYPE_DESC[value.errorType]}</p>
+          <p className="text-[11px] leading-relaxed text-ink-500">
+            {ERROR_TYPE_DESC[value.errorType] ??
+              '留空则由系统根据你和正确答案的差异自动判断（能识别「0.5」与「1/2」这类等价答案）。'}
+          </p>
           {lowHint('errorType')}
         </div>
       </Field>

@@ -53,10 +53,34 @@ export interface AiAssist {
   /** 有没有做第二遍自校验 */
   secondPass?: boolean
   selfChecked?: boolean
+  /** 视觉模型看的是不是增强后的图（增强图准确率更高） */
+  enhancedImage?: boolean
+  enhancedVariant?: string
   /** 两个引擎不一致的地方 */
   conflicts: AiAssistConflict[]
   /** 第二遍改了什么 */
   corrections: AiAssistCorrection[]
+  /** 模型提了、但被安全阀拒绝没采纳的修改 */
+  rejected: AiAssistCorrection[]
+  /** 两个引擎的一致度 0~1 */
+  agreement?: number
+}
+
+/** 图像增强方式的中文说法（别把 clahe_color 直接甩给用户看） */
+const ENHANCE_VARIANT_LABEL: Record<string, string> = {
+  clahe_color: '自动增强对比度和颜色',
+  clahe_gray: '自动增强对比度',
+  gray: '转成灰度，去掉背景干扰',
+  sharp: '锐化字迹',
+  upscale: '放大到更清晰',
+  raw: '原图',
+  none: '原图',
+}
+
+/** 增强方式的中文说明 */
+export function enhanceVariantLabel(variant?: string): string {
+  if (!variant) return '自动增强'
+  return ENHANCE_VARIANT_LABEL[variant] ?? '自动增强'
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -133,8 +157,15 @@ export function readAiAssist(
     fieldsFromOcr: safeTexts(raw.fieldsFromOcr),
     secondPass: typeof raw.secondPass === 'boolean' ? raw.secondPass : undefined,
     selfChecked: typeof raw.selfChecked === 'boolean' ? raw.selfChecked : undefined,
+    enhancedImage: typeof raw.enhancedImage === 'boolean' ? raw.enhancedImage : undefined,
+    enhancedVariant: str(raw.enhancedVariant),
     conflicts: parseConflicts(raw.conflicts),
     corrections: parseCorrections(raw.corrections),
+    rejected: parseCorrections(raw.rejected),
+    agreement:
+      typeof raw.agreement === 'number' && Number.isFinite(raw.agreement)
+        ? raw.agreement
+        : undefined,
   }
 }
 
@@ -189,12 +220,29 @@ export function sourceOf(field: string, assist: AiAssist): FieldSource {
   return 'unknown'
 }
 
+/**
+ * 后端用 'ocr' / 'vision' 表示「最终采信了哪一方」，
+ * 也可能直接给一个值 —— 两种都要能读懂。
+ */
+const CHOSEN_SOURCE: Record<string, string> = {
+  ocr: 'OCR',
+  vision: '模型',
+  model: '模型',
+  local: '本地 OCR',
+  human: '人工',
+}
+
 /** 冲突的一句话说明：模型和 OCR 到底哪儿不一样 */
 export function conflictText(c: AiAssistConflict, labelOf: (f: string) => string): string {
   const label = labelOf(c.field)
+  const chosenText = c.chosen ? (CHOSEN_SOURCE[c.chosen] ?? `「${c.chosen}」`) : ''
   if (c.vision && c.ocr && c.vision !== c.ocr) {
-    const base = `「${label}」模型认作「${c.vision}」，OCR 认作「${c.ocr}」，这里采用了「${c.chosen ?? c.ocr}」`
-    return c.reason ? `${base}（${c.reason}）` : base
+    /* 后端的 reason 里通常已经写了「采信 OCR」，就别重复一遍 */
+    const mentions = c.reason ? /采信|采用|保留/.test(c.reason) : false
+    const base =
+      `「${label}」模型读到「${c.vision}」，OCR 读到「${c.ocr}」` +
+      (!mentions && chosenText ? `，最终采信${chosenText}` : '')
+    return c.reason ? `${base}。${c.reason}` : base
   }
   if (c.reason) return `「${label}」${c.reason}`
   if (c.vision && c.ocr) return `「${label}」模型与 OCR 的结果不一致，请人工确认`

@@ -12,7 +12,7 @@
  */
 
 import { Badge } from '@/components/ui'
-import { conflictText, correctionText, SOURCE_META, sourceOf } from './aiAssist'
+import { conflictText, correctionText, enhanceVariantLabel, SOURCE_META, sourceOf } from './aiAssist'
 import type { AiAssist } from './aiAssist'
 import { fieldLabel } from './RecognitionQuality'
 
@@ -34,6 +34,7 @@ function engineSubline(assist: AiAssist): string {
   if (assist.modelName) parts.push(assist.modelName)
   if (assist.usedModel && assist.engineKind === 'model') parts.push('图片由模型直接理解')
   else parts.push('图片没有上传到云端')
+  if (assist.enhancedImage) parts.push(`看的是增强后的图（${enhanceVariantLabel(assist.enhancedVariant)}）`)
   if (assist.secondPass || assist.selfChecked) parts.push('模型又自己复查了一遍')
   return parts.join(' · ')
 }
@@ -81,6 +82,27 @@ export function AiAssistBlock({
         )}
       </div>
       <p className="mt-1 text-[11px] leading-relaxed text-ink-500">{engineSubline(assist)}</p>
+
+      {/* 两个引擎的一致度 */}
+      {assist.agreement !== undefined && (
+        <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
+          两个引擎的一致度{' '}
+          <span
+            className={`font-bold ${
+              assist.agreement >= 0.8
+                ? 'text-emerald-600'
+                : assist.agreement >= 0.5
+                  ? 'text-amber-600'
+                  : 'text-red-600'
+            }`}
+          >
+            {Math.round(assist.agreement * 100)}%
+          </span>
+          {assist.agreement < 0.6
+            ? ' —— 差距较大，下面的冲突请务必人工核对'
+            : ' —— 两边读出来的东西基本一致'}
+        </p>
+      )}
 
       {/* 字段来源 */}
       {allFields.length > 0 && (
@@ -132,6 +154,20 @@ export function AiAssistBlock({
         <p className="mt-2.5 text-[11px] leading-relaxed text-emerald-700">
           ✅ 模型和本地引擎没有发现冲突，扫一眼就能保存。
         </p>
+      )}
+
+      {/* 模型提了、但我们没采纳的修改 —— 说清楚才可信 */}
+      {assist.rejected.length > 0 && (
+        <div className="mt-2.5 rounded-xl border border-ink-200 bg-ink-50/70 p-2.5">
+          <p className="text-[11px] font-bold text-ink-600">🛡️ 模型提了这些修改，我们没有采纳</p>
+          <ul className="mt-1.5 space-y-1">
+            {assist.rejected.map((c, i) => (
+              <li key={`r-${c.field}-${i}`} className="text-[11px] leading-relaxed text-ink-600">
+                · {correctionText(c, fieldLabel)}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {/* 快速查看原文 */}

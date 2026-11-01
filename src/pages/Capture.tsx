@@ -134,7 +134,9 @@ export default function Capture() {
       myAnswer: safeText(d.myAnswer),
       correctAnswer: safeText(d.correctAnswer),
       difficulty: d.difficulty ?? 3,
-      errorType: a.diagnosis?.type ?? 'knowledge_gap',
+      /* AI 给了错因就用；没给就留空 —— 留空后端才会按作答推断，
+         写死成 'knowledge_gap' 会让推断逻辑永远短路 */
+      errorType: a.diagnosis?.type ?? '',
       errorDetail: safeText(a.diagnosis?.reason),
       source: '',
       points: '',
