@@ -146,5 +146,9 @@ console.log(
   `\n（对照）老正则 /本地|local|heuristic/ 匹配大模型文案 → ${oldRegex.test(modelText)}  ← 这就是 bug 的根源`,
 )
 
-console.log(`\n失败用例数：${failed}`)
+/* 输出格式跟其他测试脚本统一 —— 「通过 N / 失败 N」，
+   这样六个脚本的断言数**真的可以加起来核对**，
+   而不是有一个脚本的数字藏在别的地方。 */
+console.log(`\n通过 ${cases.length} / 失败 ${failed}`)
+console.log(`失败用例数：${failed}`)
 if (failed > 0) process.exit(1)
