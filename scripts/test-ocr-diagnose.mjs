@@ -21,6 +21,7 @@
  */
 
 import { explainOcrUnreachable, suggestOcrUrl } from '../server/ocr.js'
+import { ocrAddressHint, ocrPlaceholder } from '../src/features/settings/ocrPlaceholder.ts'
 
 let pass = 0
 let fail = 0
@@ -111,6 +112,32 @@ console.log('\n=== 5. 推荐地址必须跟部署方式对得上 ===')
   check('容器里绝不能推荐 127.0.0.1', !inBox.url.includes('127.0.0.1'), inBox.url)
   check('env 优先于容器判断', suggestOcrUrl({ OCR_SERVICE_URL: 'http://x:1' }, true).url === 'http://x:1')
   check('空 env 不当推荐值', suggestOcrUrl({ OCR_SERVICE_URL: '   ' }, true).source !== 'env')
+}
+
+/* -------------------------------------------------------------------------- */
+console.log('\n=== 6. 兜底占位符也不能给「必然错的具体地址」 ===')
+/* -------------------------------------------------------------------------- */
+{
+  /* ⭐ 这正是上一轮**漏掉**的那处 ——
+     主路径改好了，兜底分支没人看。
+     所以它必须有断言钉住：一个必然错的地址**不会让任何测试变红**，
+     只会让用户在生产环境里踩坑。 */
+  const withSuggestion = ocrPlaceholder('http://cuoti-ocr:8868')
+  check('有推荐值 → 用推荐值', withSuggestion === 'http://cuoti-ocr:8868', withSuggestion)
+
+  const withoutSuggestion = ocrPlaceholder('')
+  check('没推荐值 → 给中性占位符', withoutSuggestion.includes('<主机名或容器名>'), withoutSuggestion)
+  check('⭐ 兜底占位符绝不能是 127.0.0.1', !withoutSuggestion.includes('127.0.0.1'), withoutSuggestion)
+  check('兜底占位符绝不能是 localhost', !withoutSuggestion.includes('localhost'), withoutSuggestion)
+  check('null 也当没推荐值', !ocrPlaceholder(null).includes('127.0.0.1'))
+  check('空白串也当没推荐值', !ocrPlaceholder('   ').includes('127.0.0.1'))
+
+  /* hint 同理：有推荐值给正确值，没推荐值讲规则 */
+  const hintWith = ocrAddressHint('http://cuoti-ocr:8868')
+  check('hint 有推荐值 → 直接给正确值', hintWith.includes('http://cuoti-ocr:8868'), hintWith)
+  const hintWithout = ocrAddressHint('')
+  check('hint 没推荐值 → 讲容器名规则', hintWithout.includes('容器名') && hintWithout.includes('容器自己'))
+  check('hint 没推荐值 → 不给可抄的具体地址', !hintWithout.includes('http://127.0.0.1'))
 }
 
 /* -------------------------------------------------------------------------- */

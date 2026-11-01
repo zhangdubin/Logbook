@@ -7,6 +7,7 @@
 
 import { Field, ToggleRow } from '@/components/ui'
 import { OcrHealthCheck } from './OcrHealthCheck'
+import { ocrAddressHint, ocrPlaceholder } from './ocrPlaceholder'
 import type { SettingsForm } from './types'
 
 export function LocalOcrSection({
@@ -37,10 +38,8 @@ export function LocalOcrSection({
    *
    * 前端不知道自己在哪种部署里 → 由后端给（GET /api/settings/ai 的 ocrSuggestedUrl）。
    */
-  const suggestion = (suggestedUrl ?? '').trim()
-  const hint = suggestion
-    ? `这套部署里应该填 ${suggestion}（后端按部署方式给出的推荐值）。若用别的 OCR 服务商，按其文档改。`
-    : '填 OCR 服务的地址。若应用跑在 Docker 容器里，用**容器名**而不是 127.0.0.1 —— 容器里的 127.0.0.1 指的是容器自己。'
+  /* 占位符和说明文案都走纯函数 —— 断言和组件共用同一套逻辑 */
+  const hint = ocrAddressHint(suggestedUrl)
 
   return (
     <div className="space-y-4">
@@ -55,11 +54,11 @@ export function LocalOcrSection({
         <input
           className="input font-mono text-[13px]"
           value={form.ocrBaseUrl}
-          /* ⚠️ 没有后端推荐值时（比如后端是旧版），**不要**再给一个
-             可能错的**具体地址** —— 那正是这次事故的根源：
+          /* ⚠️ 没有后端推荐值时（老版后端），**不要**再给一个可能错的
+             **具体地址** —— 那正是这次事故的根源：
              用户复制了一个在容器里必然失败的地址。
              给**中性占位符**，让 hint 去讲规则。 */
-          placeholder={suggestion || 'http://<主机名或容器名>:8868'}
+          placeholder={ocrPlaceholder(suggestedUrl)}
           onChange={(e) => onChange({ ocrBaseUrl: e.target.value })}
           disabled={!form.ocrEnabled}
           autoComplete="off"
