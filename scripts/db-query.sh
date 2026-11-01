@@ -21,8 +21,13 @@
 #   bash scripts/db-query.sh                       # 进交互模式
 #
 #   # 容器部署时（数据在 named volume 里，宿主机看不到）：
+#   bash scripts/db-query.sh --list                    # ← 先看有哪些容器
 #   bash scripts/db-query.sh --container "SELECT COUNT(*) FROM questions;"
 #   bash scripts/db-query.sh --container "cuoti-analytics" "SELECT * FROM questions LIMIT 5;"
+#
+# ⚠️ 容器模式查的是**容器内**的路径（默认 /app/server/data/cuoti.db），
+#    **跟宿主机上那个 named volume 的真实位置没关系** ——
+#    不需要先去找 volume 在宿主机的挂载点。
 #
 # ⚠️ 只读。想改数据请用应用自己的 API —— 那才是有校验、有备份的那条路。
 
@@ -34,6 +39,19 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # 容器部署时数据库在 named volume（cuoti-data）里，**宿主机路径上找不到**。
 # 这时直接在容器里查 —— 而且容器里的 node 本来就有 node:sqlite，
 # 不需要宿主机装 sqlite3，也不需要把数据库拷出来。
+if [ "${1:-}" = "--list" ]; then
+  # 容器名写死是猜的 —— 先列出来让人挑
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "本机没有 docker 命令。" >&2
+    exit 1
+  fi
+  echo "本机在跑的容器（挑一个当参数）："
+  docker ps --format '  {{.Names}}\t{{.Image}}\t{{.Status}}'
+  echo
+  echo "用法：bash scripts/db-query.sh --container <容器名> \"SQL\""
+  exit 0
+fi
+
 if [ "${1:-}" = "--container" ]; then
   # 两种写法都支持：
   #   --container "SQL"                → 默认容器名
