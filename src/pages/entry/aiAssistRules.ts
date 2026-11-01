@@ -94,3 +94,64 @@ export function engineSublineParts(assist: AssistDisplayInfo, enhanceLabel: stri
   if (shouldShowSecondPass(assist)) parts.push('模型又自己复查了一遍')
   return parts
 }
+
+
+/* -------------------------------------------------------------------------
+ * 冲突文案的来源映射
+ * ---------------------------------------------------------------------- */
+
+/** 一条冲突（OCR ↔ 模型读出来不一样） */
+export interface AssistConflict {
+  /** 冲突的字段（stem / options / myAnswer …） */
+  field: string
+  /** 模型认出来的内容 */
+  vision?: string
+  /** OCR 认出来的内容 */
+  ocr?: string
+  /** 最终采用了谁的内容 */
+  chosen?: string
+  /** 原因 */
+  reason?: string
+}
+
+/**
+ * 「最终采信了谁」的中文说法。
+ *
+ * ⚠️ 这个映射**必须准确** —— 写错了就是把「采信 OCR」显示成「采信模型」，
+ *    属于**方向都反了的错**，比不显示还糟。
+ *    所以它被单独拆出来、被 scripts/test-ai-assist-honesty.mjs 直接断言。
+ */
+export const CHOSEN_SOURCE: Record<string, string> = {
+  ocr: 'OCR',
+  vision: '模型',
+  model: '模型',
+  local: '本地 OCR',
+  human: '人工',
+}
+
+/** 来源的中文说法（不认识的值原样透出，不猜） */
+export function chosenSourceText(chosen?: string): string {
+  if (!chosen) return ''
+  return CHOSEN_SOURCE[chosen] ?? `「${chosen}」`
+}
+
+/**
+ * 冲突明细的一句话。
+ *
+ * @param labelOf 字段名 → 中文名
+ */
+export function conflictText(c: AssistConflict, labelOf: (f: string) => string): string {
+  const label = labelOf(c.field)
+  const chosenText = chosenSourceText(c.chosen)
+  if (c.vision && c.ocr && c.vision !== c.ocr) {
+    /* 后端的 reason 里通常已经写了「采信 OCR」，就别重复一遍 */
+    const mentions = c.reason ? /采信|采用|保留/.test(c.reason) : false
+    const base =
+      `「${label}」模型读到「${c.vision}」，OCR 读到「${c.ocr}」` +
+      (!mentions && chosenText ? `，最终采信${chosenText}` : '')
+    return c.reason ? `${base}。${c.reason}` : base
+  }
+  if (c.reason) return `「${label}」${c.reason}`
+  if (c.vision && c.ocr) return `「${label}」模型与 OCR 的结果不一致，请人工确认`
+  return `「${label}」需要人工确认`
+}

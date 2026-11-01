@@ -31,6 +31,30 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true })
 
 export const db = new DatabaseSync(DB_FILE)
 
+/**
+ * ⚠️ **busy_timeout 必须放在最前面**。
+ *
+ * `PRAGMA journal_mode = WAL` 本身就需要拿锁 ——
+ * 另一个进程正开着这个库的时候，它会直接抛
+ *     SqliteError: database is locked
+ * 连带**整个服务起不来**（db.js 是模块顶层执行的）。
+ *
+ * 踩过的坑：开发时同时跑 5181 和 5196 两个进程，
+ * 后启动的那个**直接崩在启动阶段**：
+ *     at file:///.../server/db.js:34  db.exec('PRAGMA journal_mode = WAL')
+ *     Error: database is locked
+ *
+ * 线上同样会踩到：install-offline.sh 启动应用时，
+ * 正好有别的进程在读这个库 → **服务起不来**，
+ * 而健康检查只看到「没起来」，看不出是数据库锁。
+ *
+ * 所以顺序是：**先设 busy_timeout（等锁），再设 journal_mode**。
+ *
+ * busy_timeout 的作用：拿不到锁就**等**，最多等 8 秒。
+ * WAL 模式下读不阻塞写、写不阻塞读，正常情况下锁只持有几毫秒；
+ * 真有长时间写事务也会等 —— 比直接崩掉强得多。
+ */
+db.exec('PRAGMA busy_timeout = 8000')
 db.exec('PRAGMA journal_mode = WAL')
 db.exec('PRAGMA foreign_keys = ON')
 

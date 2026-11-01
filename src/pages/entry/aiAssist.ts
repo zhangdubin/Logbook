@@ -14,22 +14,14 @@
  */
 
 import { safeText, safeTexts } from './kpShape'
+/* 冲突类型和文案逻辑住在 aiAssistRules.ts（零依赖，才能被测试直接断言） */
+import type { AssistConflict } from './aiAssistRules'
 
 /** 字段来源：模型 / 本地 OCR / 人工填的 / 不知道 */
 export type FieldSource = 'ai' | 'ocr' | 'human' | 'unknown'
 
-export interface AiAssistConflict {
-  /** 冲突的字段（stem / options / myAnswer …） */
-  field: string
-  /** 模型认出来的内容 */
-  vision?: string
-  /** OCR 认出来的内容 */
-  ocr?: string
-  /** 最终采用了谁的内容 */
-  chosen?: string
-  /** 原因 */
-  reason?: string
-}
+export type { AssistConflict as AiAssistConflict } from './aiAssistRules'
+type AiAssistConflict = AssistConflict
 
 export interface AiAssistCorrection {
   field: string
@@ -224,30 +216,10 @@ export function sourceOf(field: string, assist: AiAssist): FieldSource {
  * 后端用 'ocr' / 'vision' 表示「最终采信了哪一方」，
  * 也可能直接给一个值 —— 两种都要能读懂。
  */
-const CHOSEN_SOURCE: Record<string, string> = {
-  ocr: 'OCR',
-  vision: '模型',
-  model: '模型',
-  local: '本地 OCR',
-  human: '人工',
-}
-
-/** 冲突的一句话说明：模型和 OCR 到底哪儿不一样 */
-export function conflictText(c: AiAssistConflict, labelOf: (f: string) => string): string {
-  const label = labelOf(c.field)
-  const chosenText = c.chosen ? (CHOSEN_SOURCE[c.chosen] ?? `「${c.chosen}」`) : ''
-  if (c.vision && c.ocr && c.vision !== c.ocr) {
-    /* 后端的 reason 里通常已经写了「采信 OCR」，就别重复一遍 */
-    const mentions = c.reason ? /采信|采用|保留/.test(c.reason) : false
-    const base =
-      `「${label}」模型读到「${c.vision}」，OCR 读到「${c.ocr}」` +
-      (!mentions && chosenText ? `，最终采信${chosenText}` : '')
-    return c.reason ? `${base}。${c.reason}` : base
-  }
-  if (c.reason) return `「${label}」${c.reason}`
-  if (c.vision && c.ocr) return `「${label}」模型与 OCR 的结果不一致，请人工确认`
-  return `「${label}」需要人工确认`
-}
+/* ⚠️ CHOSEN_SOURCE 和 conflictText 住在 aiAssistRules.ts ——
+   那个文件**零依赖**，才能被 Node 的 type stripping 直接导入、被测试断言。
+   这里再导出一次，是为了不改动现有调用方。 */
+export { CHOSEN_SOURCE, chosenSourceText, conflictText } from './aiAssistRules'
 
 /** 订正的一句话说明 */
 export function correctionText(c: AiAssistCorrection, labelOf: (f: string) => string): string {

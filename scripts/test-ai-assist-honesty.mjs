@@ -40,6 +40,8 @@ import { analyzePhoto } from '../server/ai.js'
 /* 前端的显示规则（依赖无关的 TS，Node 能直接导入）——
    断言的是**界面到底会显示哪几行**，而不只是字段之间不矛盾。 */
 import {
+  chosenSourceText,
+  conflictText,
   engineSublineParts,
   shouldShowAgreement,
   shouldShowEnhanced,
@@ -285,7 +287,52 @@ try {
   check('有模型 → 副标题里有「图片由模型直接理解」', modelSub.some((p) => p.includes('直接理解')), JSON.stringify(modelSub))
 
   /* ---------------------------------------------------------------- */
-  console.log('\n=== 4. 逐条对照：报出来的每件事都得真的发生过 ===')
+  console.log('\n=== 4. ⭐ 冲突文案本身也得说对（方向不能反） ===')
+  /* ---------------------------------------------------------------- */
+  // 「最终采信了谁」的中文映射 —— 写错了就是把「采信 OCR」显示成「采信模型」
+  eq('chosen=ocr → 说「OCR」', chosenSourceText('ocr'), 'OCR')
+  eq('chosen=vision → 说「模型」', chosenSourceText('vision'), '模型')
+  eq('chosen=model → 说「模型」', chosenSourceText('model'), '模型')
+  eq('chosen=local → 说「本地 OCR」', chosenSourceText('local'), '本地 OCR')
+  eq('chosen=human → 说「人工」', chosenSourceText('human'), '人工')
+  eq('不认识的来源原样透出（不猜）', chosenSourceText('xyz'), '「xyz」')
+  eq('没有 chosen → 空串', chosenSourceText(undefined), '')
+
+  const labelOf = (f) => ({ stem: '题干', correctAnswer: '正确答案' })[f] || f
+
+  // 冲突明细那句话：模型读到 A、OCR 读到 B，采信谁要说对
+  const t1 = conflictText(
+    { field: 'correctAnswer', vision: '26', ocr: '25', chosen: 'ocr' },
+    labelOf,
+  )
+  check(
+    '冲突句里「模型读到」在前、「OCR 读到」在后 —— 方向不能反',
+    t1.includes('模型读到「26」') && t1.includes('OCR 读到「25」'),
+    t1,
+  )
+  check('冲突句里写明采信了 OCR', t1.includes('最终采信OCR'), t1)
+  check('冲突句里没有把 OCR 说成模型', !t1.includes('最终采信模型'), t1)
+
+  const t2 = conflictText(
+    { field: 'correctAnswer', vision: '26', ocr: '25', chosen: 'vision' },
+    labelOf,
+  )
+  check('chosen=vision 时写明采信了模型', t2.includes('最终采信模型'), t2)
+  check('chosen=vision 时没说采信 OCR', !t2.includes('最终采信OCR'), t2)
+
+  // reason 里已经写了「采信」时不重复
+  const t3 = conflictText(
+    { field: 'correctAnswer', vision: '26', ocr: '25', chosen: 'ocr', reason: '以印刷体为准，采信 OCR' },
+    labelOf,
+  )
+  check('reason 里已说「采信」时不重复一句', (t3.match(/采信/g) || []).length === 1, t3)
+
+  // 只有一方时不要瞎编
+  const t4 = conflictText({ field: 'stem', vision: '甲', chosen: 'vision' }, labelOf)
+  check('只有一方时不说「不一致」', !t4.includes('不一致'), t4)
+
+  /* ---------------------------------------------------------------- */
+  console.log('\n=== 5. 逐条对照：报出来的每件事都得真的发生过 ===')
   /* ---------------------------------------------------------------- */
   // enhancedImage → 必须真的有模型参与
   check(
