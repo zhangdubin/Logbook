@@ -1351,9 +1351,20 @@ function shortError(err) {
  *
  * 返回 PhotoAnalysisResponse，永不抛异常。
  */
-export async function analyzePhoto(input = {}) {
+/**
+ * @param {object} input
+ * @param {object} [options]
+ * @param {object} [options.cfg] 覆盖模型/OCR 配置（**只给自动化测试用**）
+ *
+ * ⚠️ 为什么放在**第二个参数**而不是 input 里：
+ *    input 是直接来自 HTTP 请求体的（`analyzePhoto(req.body)`），
+ *    如果 override 能从 input 传进来，客户端就能自己指定 baseUrl/apiKey ——
+ *    等于把「往哪发请求」交给前端决定。
+ *    放第二个参数，路由调用方不传就永远走数据库里的配置。
+ */
+export async function analyzePhoto(input = {}, options = {}) {
   const hint = String(input.hint ?? '')
-  const cfg = resolveProviderConfig()
+  const cfg = options.cfg ?? resolveProviderConfig()
   const warnings = []
 
   const localBase = {
@@ -1587,7 +1598,14 @@ export async function analyzePhoto(input = {}) {
    * 冲突交给用户看：让用户知道「这里两个引擎不一致，我保留了哪个」。
    */
   let cross = null
-  if (draft && ocr?.text) {
+  // ⚠️ 必须要求「**真的有两个引擎**」才做交叉核对：
+  //    本地 OCR 路径下 draft 本身就是从 ocr.text 推导出来的，
+  //    拿它跟 ocr.text 比 —— **自己跟自己比，一致度永远是 100%**，
+  //    报出去就成了「两个引擎高度一致」的假象。
+  //
+  //    只有模型真的参与了识别（draft 来自模型、ocr.text 来自 OCR），
+  //    这才是两个**独立**信号源的交叉核对。
+  if (draft && ocr?.text && (usedVisionModel || usedTextModel)) {
     try {
       cross = crossCheckDraft({
         draft,
@@ -1757,8 +1775,16 @@ export async function analyzePhoto(input = {}) {
         secondPass: Boolean(refinement?.improved),
         selfChecked: Boolean(cross),
         // 视觉模型看的是不是增强图
-        enhancedImage: Boolean(enhancedImage),
-        enhancedVariant: enhancedImage?.variant,
+        //
+        // ⚠️ 这里必须加上 `usedVisionModel` ——
+        //    没有视觉模型时，增强图虽然**生成**了，但**没有任何模型看过它**。
+        //    这时候报 true 会让界面显示「看的是增强后的图」——
+        //    那是**假话**（本地 OCR 走的是侧车自己的预处理，不是这张增强图）。
+        //
+        //    【通则】AI 辅助信息必须**逐条对得上实际发生的事**，
+        //    否则「可解释」就成了「自我宣传」。
+        enhancedImage: Boolean(enhancedImage && usedVisionModel),
+        enhancedVariant: enhancedImage && usedVisionModel ? enhancedImage.variant : undefined,
         // 两遍识别之间做了什么修正
         ...(refinement?.corrections?.length
           ? { corrections: refinement.corrections }
