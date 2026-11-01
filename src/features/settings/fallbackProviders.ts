@@ -82,7 +82,11 @@ export const FALLBACK_PROVIDERS: AIProviderPreset[] = [
     defaultModel: 'qwen2.5vl',
     supportsVision: true,
     docUrl: 'https://ollama.com/library',
-    note: '模型跑在自己电脑上，数据完全不出本机；需要先 ollama serve 并拉取对应模型。',
+    note:
+      '模型跑在自己电脑上，数据完全不出本机；需要先 ollama serve 并拉取对应模型。' +
+      '⚠️ 上面这个地址只在**应用和 Ollama 在同一台机器**时才对：' +
+      '如果应用跑在 Docker 容器里，127.0.0.1 指的是**应用容器自己**，' +
+      '得改成 Ollama 的**容器名**或**宿主机 IP**。',
   },
   {
     id: 'custom',

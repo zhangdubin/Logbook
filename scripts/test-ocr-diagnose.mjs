@@ -22,6 +22,8 @@
 
 import { explainOcrUnreachable, suggestOcrUrl } from '../server/ocr.js'
 import { ocrAddressHint, ocrPlaceholder } from '../src/features/settings/ocrPlaceholder.ts'
+import { FAILURE_HINTS } from '../src/features/settings/failureHints.ts'
+import { FALLBACK_PROVIDERS } from '../src/features/settings/fallbackProviders.ts'
 
 let pass = 0
 let fail = 0
@@ -138,6 +140,33 @@ console.log('\n=== 6. 兜底占位符也不能给「必然错的具体地址」 
   const hintWithout = ocrAddressHint('')
   check('hint 没推荐值 → 讲容器名规则', hintWithout.includes('容器名') && hintWithout.includes('容器自己'))
   check('hint 没推荐值 → 不给可抄的具体地址', !hintWithout.includes('http://127.0.0.1'))
+}
+
+/* -------------------------------------------------------------------------- */
+console.log('\n=== 7. 失败提示里不能有「必然错的具体地址」 ===')
+/* -------------------------------------------------------------------------- */
+{
+  /* ⭐ 用户反馈里原样贴出来的那句话，就是从这里来的：
+   *   「确认地址端口写对了，例如 http://127.0.0.1:8080」
+   * 两个错：端口（侧车是 8868 不是 8080）+ 容器里 127.0.0.1 指向应用容器自己。
+   * 用户照着抄必然失败 —— 而且这是**用户看得见的文案**，不是内部日志。 */
+  const ocrTips = FAILURE_HINTS.ocr.tips
+  const all = ocrTips.join('\n')
+
+  check('⭐ OCR 提示里不再出现 127.0.0.1:8080', !all.includes('127.0.0.1:8080'), all.slice(0, 80))
+  /* 注意：判据是「**没有可抄的具体地址**」，
+   * 不是「文本里不能出现 127.0.0.1 这几个字」——
+   * 「别用 127.0.0.1」是在**讲规则**，是好的文案。 */
+  check('⭐ OCR 提示里没有可抄的 127.0.0.1 地址', !/https?:\/\/127\.0\.0\.1/.test(all), all.slice(0, 80))
+  check('OCR 提示不再教用户「跨域 / CORS」', !/CORS|跨域/.test(all))
+  check('OCR 提示提到用 docker ps 看进程', all.includes('docker ps'))
+  check('OCR 提示说正确地址由后端给出', all.includes('后端'))
+
+  /* Ollama 预设：选一下就自动填进输入框 —— 容器里同样是错的 */
+  const ollama = FALLBACK_PROVIDERS.find((p) => p.id === 'ollama')
+  check('找得到 Ollama 预设', !!ollama)
+  check('⭐ Ollama 提示里点明了容器场景', /容器/.test(ollama?.note ?? ''), ollama?.note?.slice(0, 80))
+  check('⭐ Ollama 提示里说明了该改成什么', /容器名|宿主机 IP/.test(ollama?.note ?? ''))
 }
 
 /* -------------------------------------------------------------------------- */

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit —— 提交前把源文件权限归一化
+# ---------------------------------------------------------------------------
+# 为什么需要这个？
+#
+# 源文件必须是 644（其它人也要能读）。
+# **这个坑已经漏过两次**：
+#   · 新建的文件默认是 600（取决于 umask）
+#   · 改完就忘了 chmod
+#
+# 之前只有 P-12 检查项（人工跑），但**人工检查赶不上新建文件的频率**。
+# 所以把它挂到提交钩子上 —— **漏不掉**。
+#
+# ⚠️ 为什么放在 `.githooks/` 而不是 `.git/hooks/`？
+#    `.git/hooks/` **不会被提交** —— 别人 clone 下来就没有。
+#    `.githooks/` **在仓库里**，用 `git config core.hooksPath .githooks` 启用。
+#
+# 启用（clone 之后跑一次）：
+#    git config core.hooksPath .githooks
+
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 0
+
+# 只处理真正会被提交的文件（别碰 node_modules / 构建产物）
+CHANGED="$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep -E '^(src|server)/' || true)"
+[ -z "$CHANGED" ] && exit 0
+
+BAD=""
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  MODE="$(stat -f '%Lp' "$f" 2>/dev/null || stat -c '%a' "$f" 2>/dev/null || echo '')"
+  [ "$MODE" = "644" ] && continue
+  BAD="$BAD$f "
+done <<< "$CHANGED"
+
+if [ -n "$BAD" ]; then
+  echo "  ⚠️ 源文件权限不是 644，正在归一化："
+  for f in $BAD; do
+    chmod 644 "$f"
+    echo "     ✓ $f → 644"
+  done
+  echo "  （源文件必须其他人也能读；这是自动修的，不用你手动处理）"
+fi
+
+exit 0
