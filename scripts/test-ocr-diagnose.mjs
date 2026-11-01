@@ -20,7 +20,7 @@
  * 用法：node scripts/test-ocr-diagnose.mjs [--assert]
  */
 
-import { explainOcrUnreachable } from '../server/ocr.js'
+import { explainOcrUnreachable, suggestOcrUrl } from '../server/ocr.js'
 
 let pass = 0
 let fail = 0
@@ -85,6 +85,33 @@ check('未知错误码不编造解释', !other.includes('Docker'), other)
 
 const noUrl = explainOcrUnreachable('不是URL', 'ECONNREFUSED')
 check('地址不是合法 URL 也不能崩', typeof noUrl === 'string' && noUrl.length > 0)
+
+/* -------------------------------------------------------------------------- */
+console.log('\n=== 5. 推荐地址必须跟部署方式对得上 ===')
+/* -------------------------------------------------------------------------- */
+{
+  /* 安装脚本写进来的环境变量最准 —— 两种安装方式写的都是**正确的**那个 */
+  const offline = suggestOcrUrl({ OCR_SERVICE_URL: 'http://cuoti-ocr:8868' }, true)
+  check('离线安装 → 用容器名 cuoti-ocr', offline.url === 'http://cuoti-ocr:8868', offline.url)
+  check('离线安装 → source=env', offline.source === 'env', offline.source)
+
+  const online = suggestOcrUrl({ OCR_SERVICE_URL: 'http://ocr:8868' }, true)
+  check('在线安装 → 用容器名 ocr', online.url === 'http://ocr:8868', online.url)
+
+  /* 没配环境变量时，按「在不在容器里」判断 */
+  const inBox = suggestOcrUrl({}, true)
+  check('容器里但没配 env → 仍给容器名', inBox.url === 'http://cuoti-ocr:8868', inBox.url)
+  check('容器里但没配 env → source=container-default', inBox.source === 'container-default')
+
+  const onHost = suggestOcrUrl({}, false)
+  check('宿主机直跑 → 127.0.0.1', onHost.url === 'http://127.0.0.1:8868', onHost.url)
+  check('宿主机直跑 → source=host-default', onHost.source === 'host-default')
+
+  /* ⭐ 最关键的一条：容器里**绝不能**推荐 127.0.0.1 */
+  check('容器里绝不能推荐 127.0.0.1', !inBox.url.includes('127.0.0.1'), inBox.url)
+  check('env 优先于容器判断', suggestOcrUrl({ OCR_SERVICE_URL: 'http://x:1' }, true).url === 'http://x:1')
+  check('空 env 不当推荐值', suggestOcrUrl({ OCR_SERVICE_URL: '   ' }, true).source !== 'env')
+}
 
 /* -------------------------------------------------------------------------- */
 console.log(`\n通过 ${pass} / 失败 ${fail}`)

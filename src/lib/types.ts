@@ -496,6 +496,14 @@ export interface AISettings {
   /** 本地 OCR 服务地址（PaddleOCR / RapidOCR 等），为空则不使用 */
   ocrBaseUrl: string
   ocrEnabled: boolean
+  /**
+   * **这套部署里应该填的 OCR 地址**（后端给的）。
+   *
+   * Docker 部署时 `127.0.0.1` 指的是**应用容器自己**，
+   * 必须用**容器名**（cuoti-ocr / ocr）；宿主机直跑时才用 127.0.0.1。
+   * 后端知道自己在哪种部署里，所以由后端给，前端别再写死示例。
+   */
+  ocrSuggestedUrl?: string
   /** 后端是否已保存密钥 */
   hasApiKey: boolean
   /** 实际生效的引擎描述 */

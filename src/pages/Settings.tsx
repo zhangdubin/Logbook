@@ -51,6 +51,8 @@ export default function Settings() {
    */
   const formDirtyRef = useRef(false)
   const [formDirty, setFormDirty] = useState(false)
+  /** 保存后 +1 → 让 OCR 健康检查重新探测一次（否则徽章还停在旧状态） */
+  const [ocrHealthNonce, setOcrHealthNonce] = useState(0)
   const markDirty = useCallback(() => {
     formDirtyRef.current = true
     setFormDirty(true)
@@ -187,6 +189,37 @@ export default function Settings() {
       setSaving(false)
     }
   }, [form, push])
+
+  /* ------------------- 一键采用推荐的 OCR 地址 ------------------- */
+  /**
+   * 为什么要有这个？
+   *
+   * 用户填错地址时，光说「你应该用容器名」是不够的 ——
+   * 得**改地址 → 保存 → 再点检测**，三步。
+   * 这里能**点一下就改好并重测**。
+   *
+   * 「告诉用户哪里错了」和「让用户一键修好」是两件事。
+   */
+  const applySuggestedOcrUrl = useCallback(
+    async (url: string) => {
+      const next = { ...form, ocrBaseUrl: url, ocrEnabled: true }
+      setForm(next)
+      markDirty()
+      try {
+        const saved = await api.saveAiSettings(toSettingsInput(next))
+        if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+          setSettings(saved)
+          setForm(formFromSettings(saved))
+          markClean()
+        }
+        setOcrHealthNonce((n) => n + 1)
+        push(`已改成 ${url} 并保存 ✅`, 'success')
+      } catch (e) {
+        push(e instanceof Error ? e.message : '保存失败，请稍后再试', 'error')
+      }
+    },
+    [form, markDirty, push],
+  )
 
   /* ---------------------------- 清除密钥 ---------------------------- */
   const clearKey = useCallback(async () => {
@@ -370,7 +403,13 @@ export default function Settings() {
 
       {/* ------------------------ 本地 OCR 服务 ------------------------ */}
       <Card title="本地 OCR 服务" subtitle="不想把图片发出去？在本机跑 OCR，图片不出校">
-        <LocalOcrSection form={form} onChange={patchForm} />
+        <LocalOcrSection
+          form={form}
+          onChange={patchForm}
+          suggestedUrl={settings.ocrSuggestedUrl}
+          onApplySuggested={applySuggestedOcrUrl}
+          refreshKey={ocrHealthNonce}
+        />
       </Card>
 
       {/* -------------------------- 隐私说明 -------------------------- */}

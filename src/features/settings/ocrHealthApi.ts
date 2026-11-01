@@ -33,6 +33,15 @@ export interface OcrHealthResponse {
   configured: boolean
   /** 当前配的地址 */
   baseUrl: string
+  /**
+   * **这套部署里应该填的地址**（后端给的）。
+   *
+   * 为什么需要它：同一个地址在两种部署下含义完全相反 ——
+   *   · 应用跑在宿主机上 → `http://127.0.0.1:8868` ✓
+   *   · 应用跑在 Docker 里 → `127.0.0.1` 指的是**应用容器自己** ✗
+   * 前端不知道自己在哪种部署里，所以由后端给。
+   */
+  suggestedUrl: string
   /** 探测时间 */
   checkedAt: string
 }
@@ -61,6 +70,7 @@ export async function getOcrHealth(): Promise<OcrHealthResponse> {
     latencyMs: typeof data?.latencyMs === 'number' ? data.latencyMs : null,
     configured: Boolean(data?.configured),
     baseUrl: typeof data?.baseUrl === 'string' ? data.baseUrl : '',
+    suggestedUrl: typeof data?.suggestedUrl === 'string' ? data.suggestedUrl : '',
     checkedAt: typeof data?.checkedAt === 'string' ? data.checkedAt : '',
   }
 }

@@ -17,6 +17,7 @@
  */
 
 import { RED_PIXEL_PNG_BASE64 } from './modelClient.js'
+import fs from 'node:fs'
 
 /** 去掉 data:image/xxx;base64, 前缀，只保留裸 base64 */
 export function stripDataUrl(dataUrl) {
@@ -187,6 +188,38 @@ export const OCR_TIMEOUT_MS = Math.max(
   5000,
   Number(process.env.OCR_TIMEOUT_MS ?? 60000) || 60000,
 )
+
+/**
+ * **这次部署**里，本地 OCR 应该填哪个地址。
+ *
+ * ⚠️ 为什么必须由后端给：
+ *    同一个地址在两种部署下含义完全相反 ——
+ *      · 应用直接跑在宿主机上 → `http://127.0.0.1:8868` ✓
+ *      · 应用跑在 Docker 容器里 → `127.0.0.1` 指的是**应用容器自己** ✗
+ *        必须用**容器名**（`cuoti-ocr` / `ocr`）
+ *    前端**不知道**自己在哪种部署里，所以由后端说。
+ *
+ * 之前设置页的提示写死了「例如 http://127.0.0.1:8868」——
+ * 用户**照着填就错**，然后看到「连不上」，
+ * 于是得出「我明明启用了」的结论。
+ *
+ * 优先用安装脚本写进来的 `OCR_SERVICE_URL`（两种安装方式都写了**正确的**那个）：
+ *   离线安装 → http://cuoti-ocr:8868
+ *   在线安装 → http://ocr:8868
+ *
+ * @param env   环境变量（默认 process.env）
+ * @param isContainer  是否跑在容器里（默认自动判断）
+ */
+export function suggestOcrUrl(env = process.env, isContainer = null) {
+  const fromEnv = String(env.OCR_SERVICE_URL ?? '').trim()
+  if (fromEnv) return { url: fromEnv, source: 'env' }
+  const inContainer =
+    isContainer === null
+      ? Boolean(env.container) || fs.existsSync('/.dockerenv')
+      : Boolean(isContainer)
+  if (inContainer) return { url: 'http://cuoti-ocr:8868', source: 'container-default' }
+  return { url: 'http://127.0.0.1:8868', source: 'host-default' }
+}
 
 /**
  * 把「连不上」翻译成**用户能直接照做的下一步**。
@@ -424,6 +457,7 @@ export async function probeOcrService({ baseUrl, timeoutMs = 8000 } = {}) {
 }
 
 export default {
+  suggestOcrUrl,
   runLocalOcr,
   extractOcrPairs,
   stripDataUrl,

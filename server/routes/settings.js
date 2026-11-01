@@ -17,7 +17,7 @@ import {
   resetAiSettings,
 } from '../settings.js'
 import { resolveProviderConfig, describeActiveEngine, describeActiveEngineKind, testAiConnection } from '../ai.js'
-import { probeOcrService } from '../ocr.js'
+import { probeOcrService, suggestOcrUrl } from '../ocr.js'
 import { requireAuth, requirePermission } from '../auth.js'
 
 const router = Router()
@@ -38,6 +38,9 @@ router.get('/ai', requireAuth, (_req, res) => {
     // 结构化判定：前端不该靠解析 activeEngine 文案来猜引擎类型
     // （走大模型时文案里也有「本地 OCR 服务」，靠 /本地/ 猜会误判）
     activeEngineKind: describeActiveEngineKind(cfg),
+    // 这套部署里该填的 OCR 地址（前端照着显示，别让用户猜）
+    ocrSuggestedUrl: suggestOcrUrl().url,
+    ocrUrlSource: suggestOcrUrl().source,
   })
 })
 
@@ -53,6 +56,12 @@ router.put('/ai', requirePermission('settings:ai'), (req, res) => {
     ...pub,
     activeEngine: describeActiveEngine(cfg),
     activeEngineKind: describeActiveEngineKind(cfg),
+    // ⚠️ 保存响应也要带上推荐地址 ——
+    // 前端保存完会用响应**整体替换**设置对象，
+    // 少这个字段 → 刚填的地址把推荐值**冲掉了**，
+    // 提示语立刻退回成泛泛的说明。
+    ocrSuggestedUrl: suggestOcrUrl().url,
+    ocrUrlSource: suggestOcrUrl().source,
     ...(stored?.updatedAt ? { updatedAt: stored.updatedAt } : {}),
   })
 })
@@ -105,6 +114,8 @@ router.get('/ocr-health', requireAuth, async (_req, res) => {
   const cfg = resolveProviderConfig()
   const baseUrl = String(cfg.ocrBaseUrl ?? '').trim()
   const configured = Boolean(baseUrl)
+  // 这套部署里**应该**填的地址 —— 连不上时给用户一键改
+  const suggested = suggestOcrUrl()
 
   if (!configured) {
     res.json({
@@ -114,6 +125,7 @@ router.get('/ocr-health', requireAuth, async (_req, res) => {
       latencyMs: null,
       configured: false,
       baseUrl: '',
+      suggestedUrl: suggested.url,
       checkedAt: new Date().toISOString(),
     })
     return
@@ -145,6 +157,7 @@ router.get('/ocr-health', requireAuth, async (_req, res) => {
       latencyMs,
       configured: true,
       baseUrl,
+      suggestedUrl: suggested.url,
       checkedAt: new Date().toISOString(),
     })
   } catch (err) {
@@ -155,6 +168,7 @@ router.get('/ocr-health', requireAuth, async (_req, res) => {
       latencyMs: Date.now() - started,
       configured: true,
       baseUrl,
+      suggestedUrl: suggested.url,
       checkedAt: new Date().toISOString(),
     })
   }

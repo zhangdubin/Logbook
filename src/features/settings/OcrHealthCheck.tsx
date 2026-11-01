@@ -42,6 +42,8 @@ export interface OcrHealthInfo {
   latencyMs?: number | null
   /** 实际被探测的地址（后端那边生效的） */
   baseUrl?: string
+  /** 这套部署里**应该**填的地址（后端给的） */
+  suggestedUrl?: string
   /** 探测时间 */
   checkedAt?: string
   /** 健康检查接口本身失败时的错误 */
@@ -55,6 +57,7 @@ export function mapOcrHealth(res: OcrHealthResponse): OcrHealthInfo {
     detail: res.detail,
     latencyMs: res.latencyMs,
     baseUrl: res.baseUrl,
+    suggestedUrl: res.suggestedUrl,
     checkedAt: res.checkedAt,
   }
   if (!res.configured) {
@@ -76,9 +79,32 @@ function formatLatency(ms?: number | null): string {
 export function OcrHealthCheck({
   baseUrl,
   enabled,
+  onApplySuggested,
+  refreshKey,
 }: {
   baseUrl: string
   enabled: boolean
+  /**
+   * 一键采用后端推荐的地址。
+   *
+   * 为什么要有这个按钮：光说「你应该用容器名」是不够的 ——
+   * 用户得**改地址 → 保存 → 再点检测**，三步。
+   * 而这里能**点一下就改好并重测**。
+   * 「告诉用户哪里错了」和「让用户一键修好」是两件事。
+   */
+  onApplySuggested?: (url: string) => void | Promise<void>
+  /**
+   * 变了就重新探测。
+   *
+   * 为什么需要它：原来组件**只在 enabled 变化时探测**，
+   * 于是「一键改好并重测」保存完之后 —— 地址确实改对了、后端也确实连上了，
+   * **页面徽章却还停在「🔴 探测失败」**。
+   *
+   * 保存是个**明确的动作**，不是「用户正在敲键盘」——
+   * 所以保存完就该重探一次。
+   * （用户每敲一个字就重探一次仍然不要 —— 那会把「正在输入」和「已保存」搅在一起。）
+   */
+  refreshKey?: number
 }) {
   const [info, setInfo] = useState<OcrHealthInfo>({ state: 'idle' })
   const [nonce, setNonce] = useState(0)
@@ -109,7 +135,7 @@ export function OcrHealthCheck({
     /* 注意：baseUrl 不进依赖 —— 后端探测的是「已保存」的地址，
        用户每敲一个字就重探一次既费又把「已保存」和「正在输入」搅在一起。
        表单地址与实际探测地址不一致时，界面会单独提示。 */
-  }, [enabled, nonce])
+  }, [enabled, nonce, refreshKey])
 
   const recheck = useCallback(() => setNonce((n) => n + 1), [])
 
@@ -159,6 +185,8 @@ export function OcrHealthCheck({
 
   /* 表单里改了地址但还没保存 —— 探测的其实是已保存的地址，说清楚 */
   const probed = (info.baseUrl ?? '').trim()
+  /* 后端推荐的地址 */
+  const suggested = (info.suggestedUrl ?? '').trim()
   const stale = enabled && url && probed && url !== probed
 
   return (
@@ -193,6 +221,26 @@ export function OcrHealthCheck({
           <p className="mt-1 whitespace-pre-wrap break-words text-ink-500">{info.detail}</p>
         </details>
       )}
+
+      {/* 一键修正：后端知道这套部署该用哪个地址，别让用户自己猜 */}
+      {info.state === 'unreachable' &&
+        onApplySuggested &&
+        suggested &&
+        suggested !== probed && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg bg-blue-50 px-2 py-1.5 text-[11px] leading-relaxed text-blue-900 ring-1 ring-blue-200">
+            <span>
+              这套部署里，OCR 地址应该用
+              <span className="ml-1 font-mono font-semibold">{suggested}</span>
+            </span>
+            <button
+              type="button"
+              className="btn btn-sm rounded-md bg-blue-600 px-2 py-0.5 text-white hover:bg-blue-700"
+              onClick={() => void onApplySuggested(suggested)}
+            >
+              一键改好并重测
+            </button>
+          </div>
+        )}
 
       {stale && (
         <p className="mt-1.5 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] leading-relaxed text-amber-800 ring-1 ring-amber-200">
