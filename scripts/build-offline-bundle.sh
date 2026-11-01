@@ -274,7 +274,17 @@ sed -i.bak "s/__VERSION__/${VERSION}/g" "$STAGE/README-离线部署.md" && rm -f
 # ------------------------- 4. 打包 -------------------------
 info "打包…"
 mkdir -p "$OUT_DIR"
-TARBALL="$OUT_DIR/cuoti-analytics-offline-v${VERSION}.tar.gz"
+# ⚠️ 单架构包要带架构后缀，否则会**覆盖掉**双架构包
+#    （两个包文件名一样，先构建哪个就被后构建的顶掉 ——
+#      v1.1.19 发版时就踩了：先构建双架构，再构建 amd64，结果双架构包没了）
+# 平台列表是**空格分隔**的（也兼容逗号），要数对 —— 数错了会把
+# 双架构包误判成单架构包，文件名就带上「amd64 linux/arm64」这种鬼东西。
+PLAT_COUNT="$(echo "$PLATFORMS" | tr ',' ' ' | tr -s ' ' '\n' | grep -c . || true)"
+TARBALL_NAME="cuoti-analytics-offline-v${VERSION}.tar.gz"
+if [ "${PLAT_COUNT:-0}" -eq 1 ]; then
+  TARBALL_NAME="cuoti-analytics-offline-v${VERSION}-$(echo "$PLATFORMS" | tr ',' ' ' | awk '{print $1}' | sed 's#linux/##').tar.gz"
+fi
+TARBALL="$OUT_DIR/$TARBALL_NAME"
 tar -czf "$TARBALL" -C "$(dirname "$STAGE")" "$(basename "$STAGE")"
 # 先记下里面有哪些架构（stage 马上要删）
 IMAGE_LIST="$(ls "$STAGE/images" 2>/dev/null | sed 's/^/    /')"
