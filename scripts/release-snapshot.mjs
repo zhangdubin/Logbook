@@ -33,6 +33,14 @@ import { execSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  countChanges,
+  numberChanges,
+  parseBuildInfo,
+  parseChanges,
+  parseShaLine,
+  sameCommit,
+} from './lib/releaseSnapshot.mjs'
 
 /* ⚠️ **必须用 fileURLToPath，不能用 `new URL(...).pathname`** ——
  *   `.pathname` 会把路径里的**非 ASCII 字符百分号编码**
@@ -72,9 +80,8 @@ const ok = (msg) => console.log(`  ✓ ${msg}`)
 /* --- ① tag 指向的提交 --------------------------------------------------- */
 let tagCommit = ''
 try {
-  tagCommit = execSync(`git ls-remote origin refs/tags/${TAG}`, { cwd: ROOT, encoding: 'utf8' })
-    .trim()
-    .split(/\s+/)[0]
+  const out = execSync(`git ls-remote origin refs/tags/${TAG}`, { cwd: ROOT, encoding: 'utf8' })
+  tagCommit = parseShaLine(out) || ''
 } catch {
   /* 网络不通就退回本地 */
 }
@@ -91,13 +98,9 @@ if (tagCommit) ok(`远端 tag ${TAG} → ${short(tagCommit)}`)
 /* --- ② 清单：条数是**数出来的** ----------------------------------------- */
 let changes = []
 if (CHANGES_FILE && fs.existsSync(CHANGES_FILE)) {
-  changes = fs
-    .readFileSync(CHANGES_FILE, 'utf8')
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith('#'))
+  changes = parseChanges(fs.readFileSync(CHANGES_FILE, 'utf8'))
 }
-const changeCount = changes.length
+const changeCount = countChanges(fs.existsSync(CHANGES_FILE) ? fs.readFileSync(CHANGES_FILE, 'utf8') : '')
 if (changeCount > 0) {
   ok(`补做了 **${changeCount}** 件事（从 ${path.basename(CHANGES_FILE)} 数出来的）`)
 } else {
@@ -138,7 +141,7 @@ for (const a of artifacts) {
       encoding: 'utf8',
       maxBuffer: 8 * 1024 * 1024,
     })
-    inner = JSON.parse(out.trim()).commit || ''
+    inner = parseBuildInfo(out)
   } catch (e) {
     fail(`${a.file} 里读不到 build-info.json（${String(e?.message ?? e).slice(0, 60)}）`)
   }
@@ -147,7 +150,7 @@ for (const a of artifacts) {
   /* ⚠️ build-info 里存的是**短 SHA**，远端 tag 是**全 SHA** ——
    *   直接 `inner.startsWith(tagCommit)` **永远为 false**（拿 7 位去 startsWith 40 位）。
    *   两边都取前 7 位再比。 */
-  const match = inner && tagCommit && inner.slice(0, 7) === short(tagCommit)
+  const match = sameCommit(inner, tagCommit)
   if (match) ok(`${a.file} 的 build-info commit 与 tag 一致（${short(inner)}）`)
   else fail(`${a.file} 的 build-info commit（${short(inner) || '?'}）与 tag（${short(tagCommit)}）**不一致**`)
 
@@ -191,8 +194,7 @@ for (const r of rows) {
 if (changes.length) {
   console.log('')
   console.log('补做的事：')
-  const cn = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳']
-  changes.forEach((c, i) => console.log(`${cn[i] || `${i + 1}.`} ${c}`))
+  for (const line of numberChanges(changes)) console.log(line)
 }
 
 console.log('')
