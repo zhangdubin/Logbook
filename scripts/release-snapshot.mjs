@@ -222,7 +222,19 @@ block.push(`| 版本 / tag | \`${TAG}\` |`)
 block.push(`| tag 指向的提交 | \`${short(tagCommit)}\` |`)
 block.push(`| tag 来源 | ${tagSource} |`)
 if (REPLACEMENTS) block.push(`| 附件替换次数 | ${REPLACEMENTS} 次 |`)
-block.push(`| 发布后补做的事 | **${changeCount}** 项（下列清单数出来的） |`)
+/* ⭐ **标签要用「版本中立」的措辞** ——
+ * 原来写「**发布后补做的事**」，那是因为 v1.1.19 **反复重传过 17 次**，
+ * 每次传完又修了几件事 —— 那个列表确实是「传完之后补做的」。
+ *
+ * 但**新版本第一次上传时，「传完之后补做的」应该是 0** ——
+ * 而那时这个列表装的是「**这一版做了什么**」。
+ *
+ * **同一个标签不能一会儿说 A、一会儿说 B** —— 那是在骗读者。
+ * 所以改成**版本中立**的「本次改动」：
+ *   · 对 v1.1.19：这一版（含发布后补做）的全部改动 ✓
+ *   · 对 v1.1.20：这一版的改动 ✓
+ */
+block.push(`| 本次改动 | **${changeCount}** 项（下列清单数出来的） |`)
 block.push(`| 产物 | ${rows.length} 个 |`)
 block.push('')
 block.push('| 产物 | 大小 | build-info commit | sha256 |')
@@ -232,7 +244,7 @@ for (const r of rows) {
 }
 if (changes.length) {
   block.push('')
-  block.push('**补做的事**：')
+  block.push('**本次改动**：')
   block.push('')
   block.push('| # | 改动 |')
   block.push('| --- | --- |')

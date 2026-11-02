@@ -128,7 +128,14 @@ export function parseSnapshotDoc(markdown) {
     else if (/tag\s*指向的提交/.test(key)) meta.commit = val
     else if (/tag\s*来源/.test(key)) meta.tagSource = val
     else if (/替换次数/.test(key)) meta.replacements = parseCount(val)
-    else if (/补做/.test(key)) meta.changeCount = parseCount(val)
+    /* ⭐ **两种措辞都要认** ——
+     * 旧的（「发布后补做的事」）用于 v1.1.19 那种「反复重传」的发布；
+     * 新的（「本次改动」）是**版本中立**的措辞。
+     *
+     * **加一种不能等于删一种** —— 旧文档还在硬盘上、也在 git 历史里。
+     * 认得两种，**切换措辞才是安全的**。
+     */
+    else if (/补做|本次改动/.test(key)) meta.changeCount = parseCount(val)
     else if (/^产物$/.test(key)) meta.artifactCount = parseCount(val)
   }
 

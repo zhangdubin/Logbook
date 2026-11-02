@@ -67,7 +67,7 @@ const SAMPLE = `
 | tag 指向的提交 | \`ba373cf\` |
 | **tag 来源** | **远端（git ls-remote）** |
 | 附件替换次数 | 14 次 |
-| 发布后补做的事 | **13** 项（下列清单数出来的） |
+| 本次改动 | **13** 项（下列清单数出来的） |
 | 产物 | 3 个 |
 
 | 产物 | 大小 | build-info commit | sha256 |
@@ -76,7 +76,7 @@ const SAMPLE = `
 | \`cuoti-analytics-offline-v1.1.19-amd64.tar.gz\` | **249.4 MB** | \`ba373cf\` | OK ✓ |
 | \`cuoti-analytics-offline-v1.1.19.tar.gz\` | **472.7 MB** | \`ba373cf\` | OK ✓ |
 
-**补做的事**：
+**本次改动**：
 
 | # | 改动 |
 | --- | --- |
@@ -140,7 +140,18 @@ console.log('\n=== 4. 整份快照的解析 ===')
   check('tag 指向的提交', s.meta.commit === 'ba373cf', s.meta.commit)
   check('tag 来源', /远端/.test(s.meta.tagSource), s.meta.tagSource)
   check('替换次数 14', s.meta.replacements === 14, String(s.meta.replacements))
-  check('补做了 13 件事', s.meta.changeCount === 13, String(s.meta.changeCount))
+  check('本次改动 13 项', s.meta.changeCount === 13, String(s.meta.changeCount))
+
+  /* ⭐ **加一种不能等于删一种** ——
+   * v1.1.19 的文档里写的是「**发布后补做的事**」，
+   * 那个文档还在 git 历史里、也可能被人复制到别处。
+   * **认得两种措辞，切换才是安全的。 */
+  {
+    const oldLabel = SAMPLE.replace('| 本次改动 |', '| 发布后补做的事 |')
+    const s2 = parseSnapshotDoc(oldLabel)
+    check('⭐ 旧措辞「发布后补做的事」也认得（向后兼容）',
+      s2?.meta?.changeCount === 13, String(s2?.meta?.changeCount))
+  }
   check('产物 3 个', s.meta.artifactCount === 3, String(s.meta.artifactCount))
 
   check('三个产物', s.artifacts.length === 3, String(s.artifacts.length))
