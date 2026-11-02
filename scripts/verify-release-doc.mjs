@@ -171,7 +171,7 @@ if (!Number.isFinite(snap.meta.changeCount)) {
 } else if (snap.meta.changeCount !== snap.changes.length) {
   fail(`文档写「补做了 ${snap.meta.changeCount} 件事」，清单里实际 ${snap.changes.length} 条 —— **计数和清单对不上**`)
 } else if (snap.changes.length > 0) {
-  ok(`补做的事 ${snap.changes.length} 条，与文档写的计数一致`)
+  ok(`本次改动 ${snap.changes.length} 条，与文档写的计数一致`)
 }
 
 /* -------------------------------------------------------------------------- */
