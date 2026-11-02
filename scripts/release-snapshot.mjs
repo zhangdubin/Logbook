@@ -61,6 +61,10 @@ const has = (name) => process.argv.includes(`--${name}`)
 const VERSION = arg('version')
 const CHANGES_FILE = arg('changes')
 const REPLACEMENTS = arg('replacements', '')
+/* `--write <文档路径>`：把快照**直接写进**文档的「生成区」。
+ * ⭐ 这是「文档里的数不可能漂移」的最后一环 ——
+ *   快照不再是人手抄的，而是**脚本写的**。 */
+const WRITE_TO = arg('write')
 const TAG = `v${VERSION}`
 
 if (!VERSION) {
@@ -207,25 +211,61 @@ if (!isTrustedTagSource(tagSource)) {
 }
 
 console.log('\n=== 快照 ===\n')
-console.log('> **本次发布快照**（发版时整张替换，不要逐句改）\n')
-console.log('| 项 | 值 |')
-console.log('| --- | --- |')
-console.log(`| 版本 / tag | \`${TAG}\` |`)
-console.log(`| tag 指向的提交 | \`${short(tagCommit)}\` |`)
-console.log(`| tag 来源 | ${tagSource} |`)
-if (REPLACEMENTS) console.log(`| 附件替换次数 | ${REPLACEMENTS} 次 |`)
-console.log(`| 发布后补做的事 | **${changeCount}** 项（下列清单数出来的） |`)
-console.log(`| 产物 | ${rows.length} 个 |`)
-console.log('')
-console.log('| 产物 | 大小 | build-info commit | sha256 |')
-console.log('| --- | --- | --- | --- |')
+
+/* --- 快照块（既是打印内容，也是写进文档的内容） ------------------------- */
+const block = []
+block.push('> **本次发布快照**（**发版时整段替换，不要逐句改**）')
+block.push('')
+block.push('| 项 | 值 |')
+block.push('| --- | --- |')
+block.push(`| 版本 / tag | \`${TAG}\` |`)
+block.push(`| tag 指向的提交 | \`${short(tagCommit)}\` |`)
+block.push(`| tag 来源 | ${tagSource} |`)
+if (REPLACEMENTS) block.push(`| 附件替换次数 | ${REPLACEMENTS} 次 |`)
+block.push(`| 发布后补做的事 | **${changeCount}** 项（下列清单数出来的） |`)
+block.push(`| 产物 | ${rows.length} 个 |`)
+block.push('')
+block.push('| 产物 | 大小 | build-info commit | sha256 |')
+block.push('| --- | --- | --- | --- |')
 for (const r of rows) {
-  console.log(`| \`${r.file}\` | **${r.mb} MB** | \`${r.commit}\` | ${r.sumOk ? 'OK ✓' : '**没过**'} |`)
+  block.push(`| \`${r.file}\` | **${r.mb} MB** | \`${r.commit}\` | ${r.sumOk ? 'OK ✓' : '**没过**'} |`)
 }
 if (changes.length) {
+  block.push('')
+  block.push('**补做的事**：')
+  block.push('')
+  block.push('| # | 改动 |')
+  block.push('| --- | --- |')
+  numberChanges(changes).forEach((line, i) => {
+    const m = line.match(/^([①-⑳]|\d+\.)\s*(.*)$/)
+    block.push(`| ${m ? m[1] : i + 1} | ${m ? m[2] : line} |`)
+  })
+}
+const blockText = block.join('\n')
+console.log(blockText)
+
+/* --- 写进文档的「生成区」 ------------------------------------------------ */
+if (WRITE_TO) {
+  const START = '<!-- RELEASE-SNAPSHOT:START -->'
+  const END = '<!-- RELEASE-SNAPSHOT:END -->'
+  const docPath = path.isAbsolute(WRITE_TO) ? WRITE_TO : path.join(ROOT, WRITE_TO)
+  if (!fs.existsSync(docPath)) {
+    console.log('')
+    console.log(`  ✗ 文档不存在：${docPath}`)
+    process.exit(1)
+  }
+  const doc = fs.readFileSync(docPath, 'utf8')
+  const si = doc.indexOf(START)
+  const ei = doc.indexOf(END)
+  if (si < 0 || ei < 0 || ei < si) {
+    console.log('')
+    console.log(`  ✗ 文档里没有生成区标记（${START} … ${END}）—— **没动文件**`)
+    console.log('     请先在文档的快照位置加上这两个标记。')
+    process.exit(1)
+  }
+  fs.writeFileSync(docPath, doc.slice(0, si + START.length) + '\n\n' + blockText + '\n\n' + doc.slice(ei))
   console.log('')
-  console.log('补做的事：')
-  for (const line of numberChanges(changes)) console.log(line)
+  console.log(`  ✓ 已写进 ${path.relative(ROOT, docPath)} 的生成区`)
 }
 
 console.log('')

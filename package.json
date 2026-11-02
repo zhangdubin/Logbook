@@ -22,6 +22,7 @@
     "test:reldoc": "node scripts/test-parse-release-doc.mjs --assert",
     "release:verify": "node scripts/verify-release-doc.mjs",
     "release:check": "node scripts/release-snapshot.mjs",
+    "release:write": "node scripts/release-snapshot.mjs --write docs/05-开发与部署指南.md",
     "test:model": "node scripts/test-model-client.mjs --assert",
     "test:advice": "node scripts/test-advice.mjs --assert",
     "smoke": "node scripts/smoke.mjs",

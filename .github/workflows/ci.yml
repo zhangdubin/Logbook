@@ -1,0 +1,58 @@
+name: CI
+
+# ⭐ 这个工作流解决的是**「靠人记得」** ——
+#   「文档和现实对得上吗」需要网络和产物，**跑在发版那一刻**（release:verify）；
+#   而**「文档自己跟自己矛盾吗」跟发布时机无关** ——
+#   所以它进 `npm test`，**在这里每次推送都自动跑**。
+#
+# ⚠️ **这里故意不跑 `release:verify`**：
+#   它要求「文档里的快照 == 远端 tag」——
+#   而文档描述的是「**上一次发布**」的快照，**它本来就该滞后于 HEAD**
+#   （**发布完才写文档**是这个流程的正常顺序）。
+#   塞进 CI 会让**每次推送都是红的** —— **红了就没人看它了**。
+#
+#   分工：
+#     · **文档内部一致** → `npm test` → **这里，每次推送**
+#     · **文档 == 现实** → `release:verify` → **发版那一刻**
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  guard:
+    name: 护栏（断言 + 类型 + 构建）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # node:sqlite 需要 Node 22+
+          node-version: '22'
+          cache: npm
+
+      - name: 装依赖
+        run: npm ci
+
+      - name: 断言（含「文档内部自洽」）
+        run: npm test
+
+      - name: 类型检查
+        run: npx tsc --noEmit
+
+      - name: 构建
+        run: npm run build
+
+      - name: 权限检查（新建文件忘了 chmod —— 已经漏过两次）
+        run: |
+          bad=$(find src server -type f -perm -u+w ! -perm -g+r | wc -l)
+          if [ "$bad" != "0" ]; then
+            echo "❌ 有 $bad 个源文件权限不是 644（应为 644）"
+            find src server -type f -perm -u+w ! -perm -g+r
+            exit 1
+          fi
+          echo "✅ 源文件权限都正常"
