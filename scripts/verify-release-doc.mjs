@@ -167,9 +167,9 @@ if (!Number.isFinite(snap.meta.artifactCount)) {
 } else ok(`产物数 ${snap.artifacts.length} 个`)
 
 if (!Number.isFinite(snap.meta.changeCount)) {
-  fail('文档的快照表里**没有「补做了几件事」这一行**')
+  fail('文档的快照表里**没有「本次改动」这一行**')
 } else if (snap.meta.changeCount !== snap.changes.length) {
-  fail(`文档写「补做了 ${snap.meta.changeCount} 件事」，清单里实际 ${snap.changes.length} 条 —— **计数和清单对不上**`)
+  fail(`文档写「本次改动 ${snap.meta.changeCount} 项」，清单里实际 ${snap.changes.length} 条 —— **计数和清单对不上**`)
 } else if (snap.changes.length > 0) {
   ok(`本次改动 ${snap.changes.length} 条，与文档写的计数一致`)
 }

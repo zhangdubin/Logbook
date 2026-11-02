@@ -5,13 +5,13 @@
  * 为什么要写这个脚本？
  *
  * §9.1 的发布信息里有**四个数**必须同时改：
- *   ① 附件替换次数　② 发布后补做了几件事　③ tag 指向哪个提交　④ 三个产物的体积
+ *   ① 附件替换次数　② 本次改动有几项　③ tag 指向哪个提交　④ 三个产物的体积
  *
  * 手工维护这四个数的**失败率很高** —— 它们散在一大段散文里，
  * 每次发版要逐句去改，**漏一个就会留下一个自相矛盾的说明**。
  *
  * ⭐ 而且它**真的错过**：
- *   有一次我写「补做了十一件事」，下面的清单列了**十二件** ——
+ *   有一次我写「十一件事」，下面的清单列了**十二件** ——
  *   是文档同事发现并**把两条合并凑成十一件**才自洽的。
  *
  * > **计数不能靠人记得 —— 必须算出来。**
@@ -20,7 +20,7 @@
  *   ① 从 git 读出 tag 指向的提交（**唯一可信来源**）
  *   ② 逐个产物解包读 `build-info.json`，**核对 commit 和 tag 是否一致**（P-13）
  *   ③ **验 sha256**
- *   ④ 从清单文件里**算出**「补做了几件事」—— **数出来的，不是写出来的**
+ *   ④ 从清单文件里**算出**「本次改动有几项」—— **数出来的，不是写出来的**
  *
  * 用法：
  *   node scripts/release-snapshot.mjs --version 1.1.19 --changes /tmp/changes.txt
@@ -121,9 +121,9 @@ if (CHANGES_FILE && fs.existsSync(CHANGES_FILE)) {
 }
 const changeCount = countChanges(fs.existsSync(CHANGES_FILE) ? fs.readFileSync(CHANGES_FILE, 'utf8') : '')
 if (changeCount > 0) {
-  ok(`补做了 **${changeCount}** 件事（从 ${path.basename(CHANGES_FILE)} 数出来的）`)
+  ok(`本次改动 **${changeCount}** 项（从 ${path.basename(CHANGES_FILE)} 数出来的）`)
 } else {
-  fail('没给变更清单文件 —— 「补做了几件事」必须算出来，不能写')
+  fail('没给变更清单文件 —— 「本次改动有几项」必须算出来，不能写')
 }
 
 /* --- ③ 逐个产物：核对 commit + 验 sha256 -------------------------------- */
