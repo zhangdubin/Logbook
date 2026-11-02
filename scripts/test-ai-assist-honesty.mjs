@@ -127,9 +127,12 @@ function startMockModel() {
 /* -------------------------------------------------------------------------- */
 function findSampleImage() {
   const candidates = [
+    /* ⭐ **仓库里那张固定样例图排在最前** ——
+     * 它一定存在，**不依赖环境里有没有 Python、有没有中文字体、有没有跑过生成脚本**。
+     * 下面两个是「现场生成」的版本 —— 谁先跑过生成脚本就用谁的。 */
+    path.join(ROOT, 'scripts/test-fixtures/ocr-math.jpg'),
     '/tmp/ocrtest/real/math.jpg',
     '/tmp/ocrtest/clean/math.png',
-    path.join(ROOT, 'scripts/ocr-bench/samples/math.jpg'),
   ]
   for (const c of candidates) {
     if (fs.existsSync(c)) return c
@@ -363,6 +366,17 @@ try {
 /* -------------------------------------------------------------------------- */
 /* 结论                                                                         */
 /* -------------------------------------------------------------------------- */
+/* ⭐ **零断言不是「通过」** ——
+ * 一个测试跑出 **0 条断言**，通常意味着它**什么都没测就退出了**
+ * （依赖的样例文件没生成、模块没导入、条件分支没走到…）。
+ *
+ * 那是**静默失败** —— CI 会显示绿的，而实际上**什么都没验**。
+ * 所以：**0 条断言 = 失败**。 */
+if (pass + fail === 0) {
+  console.log('\n\x1b[31m⛔ 一条断言都没跑 —— 不算通过（这是「静默失败」的形状）\x1b[0m')
+  process.exit(1)
+}
+
 console.log(`\n通过 ${pass} / 失败 ${fail}`)
 if (fail) {
   console.log('失败项：')
