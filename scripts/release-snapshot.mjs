@@ -35,6 +35,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   countChanges,
+  isTrustedTagSource,
   numberChanges,
   parseBuildInfo,
   parseChanges,
@@ -85,11 +86,15 @@ const ok = (msg) => console.log(`  ✓ ${msg}`)
  *    快照会被整段贴进文档，**提示印在屏幕上没人看，印在表里才留得下**。 */
 let tagCommit = ''
 let tagSource = '远端（git ls-remote）'
-try {
-  const out = execSync(`git ls-remote origin refs/tags/${TAG}`, { cwd: ROOT, encoding: 'utf8' })
-  tagCommit = parseShaLine(out) || ''
-} catch {
-  /* 网络不通 → 下面降级 */
+/* `--offline`：强制走本地 tag —— 用来**验证降级路径**的行为。
+   （也是网络确实不通时的手动开关。） */
+if (!has('offline')) {
+  try {
+    const out = execSync(`git ls-remote origin refs/tags/${TAG}`, { cwd: ROOT, encoding: 'utf8' })
+    tagCommit = parseShaLine(out) || ''
+  } catch {
+    /* 网络不通 → 下面降级 */
+  }
 }
 if (!tagCommit) {
   tagSource = '⚠️ **本地 tag（远端读不到 —— 可能比远端旧！）**'
@@ -186,6 +191,21 @@ for (const a of artifacts) {
 }
 
 /* -------------------------------------------------------------------------- */
+if (!isTrustedTagSource(tagSource)) {
+  /* ⭐ **降级时不产出快照** ——
+   *   「待确认的快照」和「已确认的快照」**长得一样**，
+   *   迟早有人把待确认的当成确认的用。
+   *
+   *   > **有快照 = 已验证。**
+   *
+   *   所以这里只给警告 + 退出码 1，**不产出任何可粘贴的块**。 */
+  console.log('')
+  console.log('  ⛔ **tag 来源不是远端 —— 这次的结果不能直接用，不产出快照。**')
+  console.log('     远端恢复后请重跑本脚本，再拿它的输出去贴文档。')
+  console.log('')
+  process.exit(1)
+}
+
 console.log('\n=== 快照 ===\n')
 console.log('> **本次发布快照**（发版时整张替换，不要逐句改）\n')
 console.log('| 项 | 值 |')

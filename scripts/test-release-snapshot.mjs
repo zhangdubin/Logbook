@@ -27,6 +27,7 @@
 
 import {
   countChanges,
+  isTrustedTagSource,
   numberChanges,
   parseBuildInfo,
   parseChanges,
@@ -134,6 +135,20 @@ console.log('\n=== 4. build-info 解析 ===')
 }
 
 /* -------------------------------------------------------------------------- */
+console.log('\n=== 5. 「有快照 = 已验证」—— tag 来源的守门条件 ===')
+/* -------------------------------------------------------------------------- */
+{
+  /* ⭐ docs 第 34 轮的观察：
+     「待确认的快照」和「已确认的快照」**长得一样**，
+     迟早有人把待确认的当成确认的用。
+     所以**降级时不产出快照** —— 只有远端来源才算「已验证」。 */
+  check('远端来源 → 可信', isTrustedTagSource('远端（git ls-remote）') === true)
+  check('本地降级 → 不可信', isTrustedTagSource('⚠️ **本地 tag（远端读不到 —— 可能比远端旧！）**') === false)
+  check('空来源 → 不可信', isTrustedTagSource('') === false)
+  check('null → 不可信', isTrustedTagSource(null) === false)
+  check('⭐ 只有「远端」开头才可信', isTrustedTagSource('远端') === true && isTrustedTagSource('本地') === false)
+}
+
 console.log(`\n通过 ${pass} / 失败 ${fail}`)
 if (fail) {
   console.log('失败项：')

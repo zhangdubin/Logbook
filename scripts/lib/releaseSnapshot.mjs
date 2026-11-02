@@ -97,6 +97,22 @@ export function parseBuildInfo(json) {
   }
 }
 
+/**
+ * 这个 tag 来源**可信吗**？
+ *
+ * ⭐ **这是「快照」这个词的守门条件**：
+ *    只有**远端**来源的 tag 才是「已验证」——
+ *    本地 tag **可能比远端旧**，拿它比对得出的结论**不能直接用**。
+ *
+ * > **有快照 = 已验证。**
+ * > 降级时**不产出快照**（只产出警告 + 退出码 1）——
+ * > 否则「待确认的快照」和「已确认的快照」**长得一样**，
+ * > **迟早有人把待确认的当成确认的用。**
+ */
+export function isTrustedTagSource(source) {
+  return String(source ?? '').startsWith('远端')
+}
+
 /** 把 n 条变更编成 ①②③…（超过 20 条就用 `n.`） */
 export function numberChanges(items) {
   const circled = ['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩','⑪','⑫','⑬','⑭','⑮','⑯','⑰','⑱','⑲','⑳']
