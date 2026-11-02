@@ -22,6 +22,9 @@
  * 用法：node scripts/test-parse-release-doc.mjs [--assert]
  */
 
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   cleanCell,
   isArtifactName,
@@ -31,6 +34,11 @@ import {
   parseSnapshotDoc,
   splitRow,
 } from './lib/parseReleaseDoc.mjs'
+
+/* ⚠️ `new URL(...).pathname` 会把中文目录名**百分号编码**，
+ *   于是路径指向一个不存在的目录 —— 必须用 `fileURLToPath`。 */
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const DOC = path.join(ROOT, 'docs', '05-开发与部署指南.md')
 
 let pass = 0
 let fail = 0
@@ -160,6 +168,48 @@ console.log('\n=== 5. 边界 ===')
   const two = SAMPLE + '\n| 项 | 值 |\n| --- | --- |\n| 版本 / tag | `v9.9.9` |\n'
   const s = parseSnapshotDoc(two)
   check('⭐ 只读第一张快照表（不越界到下一节）', s.meta.tag === 'v1.1.19', s.meta.tag)
+}
+
+/* -------------------------------------------------------------------------- */
+console.log('\n=== 6. 真实的 §9.1 文档：内部自洽吗？ ===')
+/* -------------------------------------------------------------------------- */
+/* ⭐ docs 第 36 轮的观察：
+   `release:verify` 拦下的两类东西**性质不同**：
+     · 文档停在上一轮的值      → **忘了更新**（要等发布流程才发现）
+     · **表里写 13、清单 14 行** → **文档内部自相矛盾**（写完当场就能看出来）
+
+   第二类**跟发布时机无关** —— 它是**文档自己跟自己矛盾**，
+   所以**可以（也应该）提前到 `npm test`** ✓
+   纯读文档，**毫秒级**。 */
+{
+  if (!fs.existsSync(DOC)) {
+    check('§9.1 文档存在', false, path.join('docs', '05-开发与部署指南.md'))
+  } else {
+    check('§9.1 文档存在', true)
+    const s = parseSnapshotDoc(fs.readFileSync(DOC, 'utf8'))
+    check('文档里有「本次发布快照」表', s !== null)
+
+    if (s) {
+      check('⭐ 表里的「补做了几件事」== 清单实际条数',
+        s.meta.changeCount === s.changes.length,
+        `表里 ${s.meta.changeCount}，清单 ${s.changes.length} 条`)
+
+      check('⭐ 表里的「产物」个数 == 产物行数',
+        s.meta.artifactCount === s.artifacts.length,
+        `表里 ${s.meta.artifactCount}，表体 ${s.artifacts.length} 行`)
+
+      check('清单不是空的', s.changes.length > 0, `${s.changes.length} 条`)
+
+      check('每个产物都写了大小', s.artifacts.every((a) => a.sizeMb !== null))
+      check('每个产物都写了 commit', s.artifacts.every((a) => a.commit))
+      check('每个产物都标了 sha256 OK', s.artifacts.every((a) => a.shaOk))
+      check('tag 指向的提交是 7 位短 SHA', /^[0-9a-f]{7}$/.test(s.meta.commit || ''), s.meta.commit)
+
+      /* 「tag 来源」必须是「远端」——
+         降级时产出的快照**本身就不该用**，不该贴在文档里。 */
+      check('⭐ tag 来源是「远端」', /^远端/.test(s.meta.tagSource || ''), s.meta.tagSource)
+    }
+  }
 }
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`)
