@@ -78,22 +78,32 @@ const fail = (msg) => {
 const ok = (msg) => console.log(`  ✓ ${msg}`)
 
 /* --- ① tag 指向的提交 --------------------------------------------------- */
+/* ⚠️ **远端读不到时不能悄悄降级** ——
+ *    本地 tag **可能比远端旧**，拿它去比对会**报出一个假的「不一致」**，
+ *    而 §9.1 把 `git ls-remote` 称作「**唯一可信来源**」。
+ *    所以降级必须**大声说出来**，而且**要写进输出的快照里** ——
+ *    快照会被整段贴进文档，**提示印在屏幕上没人看，印在表里才留得下**。 */
 let tagCommit = ''
+let tagSource = '远端（git ls-remote）'
 try {
   const out = execSync(`git ls-remote origin refs/tags/${TAG}`, { cwd: ROOT, encoding: 'utf8' })
   tagCommit = parseShaLine(out) || ''
 } catch {
-  /* 网络不通就退回本地 */
+  /* 网络不通 → 下面降级 */
 }
 if (!tagCommit) {
+  tagSource = '⚠️ **本地 tag（远端读不到 —— 可能比远端旧！）**'
   try {
     tagCommit = execSync(`git rev-list -n 1 ${TAG}`, { cwd: ROOT, encoding: 'utf8' }).trim()
+    console.log(`  ⚠️ **远端 ${TAG} 读不到（网络问题），退回用本地 tag**`)
+    console.log(`     本地 tag **可能比远端旧** —— 拿它比对会**报出假的「不一致」**。`)
+    console.log(`     网络恢复后请重跑本脚本再发版。`)
   } catch {
-    fail(`读不到 ${TAG} 指向的提交`)
+    fail(`读不到 ${TAG} 指向的提交（远端和本地都读不到）`)
   }
 }
 const short = (sha) => (sha || '').slice(0, 7)
-if (tagCommit) ok(`远端 tag ${TAG} → ${short(tagCommit)}`)
+if (tagCommit) ok(`${TAG} → ${short(tagCommit)}（来源：${tagSource.replace(/\*\*/g, '')}）`)
 
 /* --- ② 清单：条数是**数出来的** ----------------------------------------- */
 let changes = []
@@ -182,6 +192,7 @@ console.log('| 项 | 值 |')
 console.log('| --- | --- |')
 console.log(`| 版本 / tag | \`${TAG}\` |`)
 console.log(`| tag 指向的提交 | \`${short(tagCommit)}\` |`)
+console.log(`| tag 来源 | ${tagSource} |`)
 if (REPLACEMENTS) console.log(`| 附件替换次数 | ${REPLACEMENTS} 次 |`)
 console.log(`| 发布后补做的事 | **${changeCount}** 项（下列清单数出来的） |`)
 console.log(`| 产物 | ${rows.length} 个 |`)
