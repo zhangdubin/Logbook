@@ -48,9 +48,29 @@ export function sameCommit(a, b) {
 }
 
 /**
+ * 去掉一行**已有的编号前缀**（`① `、`1. `、`1、`、`(1) ` …）。
+ *
+ * ⚠️ 为什么要有：
+ *    清单文件里可能已经带了编号（人写的习惯），
+ *    而脚本输出时**还会自己编一遍号** ——
+ *    于是出现 `① ① 修「AI 辅助撒谎」` 这种**双重编号**。
+ *
+ *    **编号只该有一个来源** —— 脚本自己编。
+ *    所以先把文件里带来的编号**剥掉**，再统一编一遍。
+ */
+export function stripNumbering(line) {
+  return String(line ?? '')
+    .trim()
+    .replace(/^[①-⑳㉑-㉟]\s*/, '')
+    .replace(/^\(?\d{1,2}\)\s*/, '')
+    .replace(/^\d{1,2}\s*[.、)）]\s*/, '')
+    .trim()
+}
+
+/**
  * 变更清单 → 条目数组。
  *
- * 规则：去掉空行、去掉 `#` 开头的注释行。
+ * 规则：去掉空行、去掉 `#` 开头的注释行、**剥掉行内已有的编号**。
  * **「补做了几件事」= 这个数组的长度 —— 数出来的，不是写出来的。**
  */
 export function parseChanges(text) {
@@ -58,6 +78,8 @@ export function parseChanges(text) {
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith('#'))
+    .map(stripNumbering)
+    .filter(Boolean)
 }
 
 /** 变更清单 → 条数 */

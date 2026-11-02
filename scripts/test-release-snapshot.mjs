@@ -32,6 +32,7 @@ import {
   parseChanges,
   parseShaLine,
   sameCommit,
+  stripNumbering,
 } from './lib/releaseSnapshot.mjs'
 
 let pass = 0
@@ -68,6 +69,18 @@ console.log('\n=== 1. 「补做了几件事」必须数出来 ===')
   const twelve = Array.from({ length: 12 }, (_, i) => `第${i + 1}件`).join('\n')
   check('⭐ 清单十二行 → 12 项（不是手写的 11）', countChanges(twelve) === 12, String(countChanges(twelve)))
   check('parseChanges 和 countChanges 一致', parseChanges(twelve).length === countChanges(twelve))
+
+  /* ⚠️ 编号**只该有一个来源** —— 脚本自己编。
+     清单文件里可能已经带了编号（人写的习惯），
+     不剥掉就会输出 `① ① 修「…」` 这种双重编号。 */
+  check('剥掉 ① 前缀', stripNumbering('① 修「AI 辅助撒谎」') === '修「AI 辅助撒谎」')
+  check('剥掉 ⑫ 前缀', stripNumbering('⑫ 发布快照改成脚本生成') === '发布快照改成脚本生成')
+  check('剥掉 1. 前缀', stripNumbering('1. 第一件事') === '第一件事')
+  check('剥掉 1、 前缀', stripNumbering('1、第一件事') === '第一件事')
+  check('剥掉 (1) 前缀', stripNumbering('(1) 第一件事') === '第一件事')
+  check('没有编号的不动', stripNumbering('第一件事') === '第一件事')
+  check('⭐ 带编号的清单，条数照样对', countChanges('① a\n② b\n③ c') === 3)
+  check('⭐ 带编号的清单，编号不重复', numberChanges(parseChanges('① a\n② b')).join(' ') === '① a ② b')
 
   const numbered = numberChanges(parseChanges(twelve))
   check('编号到 ⑫', numbered[11].startsWith('⑫'), numbered[11])
